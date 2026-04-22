@@ -20,7 +20,7 @@ function App() {
 
     setIsLoading(true);
     try {
-        const res = await fetch(`https://corsproxy.io/?https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(searchInput)}`);
+        const res = await fetch(`https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(searchInput)}`);
         const data = await res.json();
 
         if (data.quotes && data.quotes.length > 0) {
