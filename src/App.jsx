@@ -75,7 +75,7 @@ function App() {
         else if (timeframe === '5Y') range = '5y';
         else if (timeframe === 'MAX') range = 'max';
 
-        const res = await fetch(`https://corsproxy.io/?https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=${range}&interval=1d`);
+        const res = await fetch('https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=${range}&interval=1d');
         const json = await res.json();
         
         if (!isMounted) return; 
