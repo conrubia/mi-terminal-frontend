@@ -13,14 +13,16 @@ function App() {
   const [searchInput, setSearchInput] = useState('');
   const [lang, setLang] = useState('es');
 
+  // --- BUSCADOR INTELIGENTE ---
   const ejecutarBusquedaInteligente = async (e) => {
     e.preventDefault();
     if (!searchInput.trim()) return;
     setIsLoading(true);
     try {
-        const searchUrl = `https://query2.finance.yahoo.com/v1/finance/search?q=${searchInput}`;
-        const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(searchUrl)}`);
-        const data = await res.json();
+        const queryUrl = `https://query2.finance.yahoo.com/v1/finance/search?q=${searchInput}`;
+        const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(queryUrl)}`);
+        const json = await res.json();
+        const data = JSON.parse(json.contents);
         if (data.quotes && data.quotes.length > 0) {
             setTicker(data.quotes[0].symbol);
         }
@@ -40,7 +42,6 @@ function App() {
       grid: { vertLines: { color: '#2B2B43' }, horzLines: { color: '#2B2B43' } },
       width: chartContainerRef.current.clientWidth,
       height: 600,
-      crosshair: { mode: 0 }
     });
     chartInstance.current = chart;
 
@@ -48,18 +49,13 @@ function App() {
       upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350',
     });
 
-    const volumeSeries = chart.addSeries(HistogramSeries, {
-      color: '#26a69a', priceFormat: { type: 'volume' }, priceScaleId: '', 
-    });
-    chart.priceScale('').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
-
     let noticiasAsignadas = {};
 
     const fetchData = async () => {
       try {
         let range = timeframe === '1M' ? '1mo' : timeframe === '6M' ? '6mo' : timeframe === '1Y' ? '1y' : timeframe === '5Y' ? '5y' : 'max';
         
-        // --- FETCH DE DATOS (YAHOO) ---
+        // 1. FETCH DE DATOS CON PROXY ROBUSTO
         const urlYahoo = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=${range}&interval=1d`;
         const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(urlYahoo)}`);
         const wrapper = await res.json();
@@ -77,26 +73,28 @@ function App() {
 
         candlestickSeries.setData(candleData);
 
-        // --- FETCH DE NOTICIAS (RENDER) ---
+        // 2. FETCH DE NOTICIAS (RENDER)
         // ⚠️ CAMBIA ESTA URL POR LA TUYA DE RENDER ⚠️
-        const urlNoticias = `https://mi-terminal-backend.onrender.com`; 
+        const urlRender = `https://mi-terminal-backend.onrender.com//api/analisis/${ticker}`; 
         
-        const resNews = await fetch(urlNoticias);
+        const resNews = await fetch(urlRender);
         const noticiasIA = await resNews.json();
 
         if (noticiasIA && !noticiasIA.error && isMounted) {
             const marcadores = [];
             Object.keys(noticiasIA).forEach(fecha => {
                 const noticia = noticiasIA[fecha];
-                let fechaFinal = candleData.find(d => d.time <= fecha)?.time;
+                let fechaFinal = null;
                 for (let i = candleData.length - 1; i >= 0; i--) {
                   if (candleData[i].time <= fecha) { fechaFinal = candleData[i].time; break; }
                 }
                 if (fechaFinal && !noticiasAsignadas[fechaFinal]) {
                     noticiasAsignadas[fechaFinal] = { ...noticia, date: fecha };
                     marcadores.push({
-                        time: fechaFinal, position: noticia.impact === 'Alcista' ? 'belowBar' : 'aboveBar',
-                        color: noticia.color, shape: noticia.impact === 'Alcista' ? 'arrowUp' : 'arrowDown',
+                        time: fechaFinal, 
+                        position: noticia.impact === 'Alcista' ? 'belowBar' : 'aboveBar',
+                        color: noticia.color, 
+                        shape: noticia.impact === 'Alcista' ? 'arrowUp' : 'arrowDown',
                         text: 'N', size: 2
                     });
                 }
@@ -105,7 +103,7 @@ function App() {
         }
         chart.timeScale().fitContent();
       } catch (e) { 
-        console.error("Error cargando datos:", e); 
+        console.error("Error:", e); 
       } finally { 
         if (isMounted) setIsLoading(false); 
       }
@@ -116,10 +114,7 @@ function App() {
     
     return () => { 
       isMounted = false; 
-      if (chartInstance.current) {
-        chartInstance.current.remove();
-        chartInstance.current = null;
-      }
+      chart.remove();
     };
   }, [ticker, timeframe]);
 
@@ -131,7 +126,7 @@ function App() {
             <h2 style={{ margin: 0 }}>{ticker} <span style={{ color: '#787B86', fontSize: '14px' }}>Terminal</span></h2>
             <div style={{ display: 'flex', gap: '15px' }}>
               <button onClick={() => setLang(lang === 'es' ? 'en' : 'es')} style={{ padding: '5px 10px', backgroundColor: '#1E222D', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>{lang.toUpperCase()}</button>
-              <form onSubmit={ejecutarBusquedaInteligente}><input value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="Buscar..." style={{ padding: '8px', borderRadius: '6px', border: '1px solid #2B2B43', backgroundColor: '#1E222D', color: 'white' }} /></form>
+              <form onSubmit={ejecutarBusquedaInteligente}><input value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="Buscar activo..." style={{ padding: '8px', borderRadius: '6px', border: '1px solid #2B2B43', backgroundColor: '#1E222D', color: 'white' }} /></form>
             </div>
           </div>
           <div style={{ display: 'flex', gap: '8px', marginBottom: '15px' }}>
@@ -139,9 +134,9 @@ function App() {
           </div>
           <div style={{ position: 'relative', height: '600px' }}>
             <div ref={chartContainerRef} style={{ height: '100%', borderRadius: '8px', border: '1px solid #2B2B43', overflow: 'hidden' }} />
-            {isLoading && <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', color: '#26a69a' }}>Conectando con mercados...</div>}
+            {isLoading && <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', color: '#26a69a' }}>Cargando mercados...</div>}
             {selectedNews && (
-               <div style={{ position: 'absolute', top: '20px', right: '20px', width: '300px', backgroundColor: 'rgba(30, 34, 45, 0.98)', border: `1px solid ${selectedNews.color}`, borderRadius: '8px', padding: '15px', zIndex: 100, boxShadow: '0 4px 15px rgba(0,0,0,0.5)'}}>
+               <div style={{ position: 'absolute', top: '20px', right: '20px', width: '300px', backgroundColor: 'rgba(30, 34, 45, 0.98)', border: `1px solid ${selectedNews.color}`, borderRadius: '8px', padding: '15px', zIndex: 100 }}>
                   <div style={{ fontSize: '11px', color: '#787B86', display: 'flex', justifyContent: 'space-between' }}><span>{selectedNews.date}</span><span style={{ cursor: 'pointer' }} onClick={() => setSelectedNews(null)}>✕</span></div>
                   <div style={{ fontWeight: 'bold', margin: '10px 0' }}>{selectedNews[lang].title}</div>
                   <div style={{ fontSize: '13px', color: '#D1D4DC' }}>{selectedNews[lang].body}</div>
