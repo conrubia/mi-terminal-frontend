@@ -8,11 +8,10 @@ function App() {
   const chartInstance = useRef(null); 
   const [ticker, setTicker] = useState('AAPL');
   const [timeframe, setTimeframe] = useState('1Y');
-  const [selectedNews, setSelectedNews] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [searchInput, setSearchInput] = useState('');
 
-  // ⚠️ CAMBIA ESTO: URL de tu Render (Ej: https://mi-api.onrender.com)
+  // ⚠️ CAMBIA ESTO: URL de tu Render (Sin la / al final)
   const RENDER_URL = "https://mi-terminal-backend.onrender.com"; 
 
   const manejarBusqueda = (e) => {
@@ -42,32 +41,27 @@ function App() {
 
     const cargarDatos = async () => {
       try {
-        // 1. Carga de precios a través del Backend
-        const resP = await fetch(RENDER_URL + "/api/precios/" + ticker + "?timeframe=" + timeframe.toLowerCase());
+        // Llamada limpia al backend
+        const resP = await fetch(`${RENDER_URL}/api/precios/${ticker}`);
         const candleData = await resP.json();
         
-        if (!isMounted || candleData.error) return;
-        candlestickSeries.setData(candleData);
-
-        // 2. Carga de noticias
-        const resN = await fetch(RENDER_URL + "/api/analisis/" + ticker);
-        const noticias = await resN.json();
-
-        if (noticias && isMounted) {
-            const marcadores = [];
-            Object.keys(noticias).forEach(fecha => {
-                const n = noticias[fecha];
-                if (candleData.some(d => d.time === fecha)) {
-                    marcadores.push({
-                        time: fecha, position: 'aboveBar', color: n.color, shape: 'circle', text: 'N'
-                    });
-                }
-            });
+        if (isMounted && !candleData.error) {
+          candlestickSeries.setData(candleData);
+          
+          // Cargar Noticias
+          const resN = await fetch(`${RENDER_URL}/api/analisis/${ticker}`);
+          const noticias = await resN.json();
+          
+          if (noticias) {
+            const marcadores = Object.keys(noticias).map(fecha => ({
+              time: fecha, position: 'aboveBar', color: '#FFD700', shape: 'circle', text: 'N'
+            })).filter(m => candleData.some(d => d.time === m.time));
             createSeriesMarkers(candlestickSeries, marcadores);
+          }
+          chart.timeScale().fitContent();
         }
-        chart.timeScale().fitContent();
       } catch (e) {
-        console.error("Error de conexión:", e);
+        console.error("Error:", e);
       } finally {
         if (isMounted) setIsLoading(false);
       }
@@ -81,37 +75,29 @@ function App() {
     <div style={{ padding: '20px', backgroundColor: '#0c0d10', minHeight: '100vh', color: 'white', fontFamily: 'sans-serif' }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '20px', maxWidth: '1400px', margin: '0 auto' }}>
         
-        {/* PANEL IZQUIERDO: GRÁFICO */}
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-            <h2 style={{ margin: 0 }}>{ticker} <span style={{ color: '#787B86', fontSize: '14px' }}>Terminal Financiera</span></h2>
+            <h2 style={{ margin: 0 }}>{ticker} <span style={{ color: '#787B86', fontSize: '14px' }}>Terminal Inteligente</span></h2>
             <form onSubmit={manejarBusqueda}>
               <input 
                 value={searchInput} 
                 onChange={e => setSearchInput(e.target.value)} 
-                placeholder="Ej: BTC-USD, SAN.MC..." 
+                placeholder="Ej: AAPL, BTC-USD..." 
                 style={{ padding: '10px', borderRadius: '6px', border: '1px solid #2B2B43', backgroundColor: '#1E222D', color: 'white' }}
               />
             </form>
-          </div>
-
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '15px' }}>
-            {['1M', '1Y', '5Y', 'MAX'].map(t => (
-              <button key={t} onClick={() => setTimeframe(t)} style={{ padding: '6px 12px', backgroundColor: timeframe === t ? '#2962FF' : '#1E222D', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>{t}</button>
-            ))}
           </div>
 
           <div style={{ position: 'relative', border: '1px solid #2B2B43', borderRadius: '8px', overflow: 'hidden', height: '600px' }}>
             <div ref={chartContainerRef} style={{ height: '100%' }} />
             {isLoading && (
               <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', backgroundColor: 'rgba(0,0,0,0.8)', padding: '20px', borderRadius: '10px' }}>
-                Sincronizando con Backend...
+                Conectando con el servidor...
               </div>
             )}
           </div>
         </div>
 
-        {/* PANEL DERECHO: WIDGETS */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <div style={{ backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px' }}>
             <EconomicCalendar />
