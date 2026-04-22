@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { createChart, CandlestickSeries, HistogramSeries, createSeriesMarkers } from 'lightweight-charts';
+import { createChart, CandlestickSeries, createSeriesMarkers } from 'lightweight-charts';
 import EconomicCalendar from "./assets/EconomicCalendar";
 import FearAndGreed from "./FearAndGreed";
 
@@ -13,14 +13,14 @@ function App() {
   const [searchInput, setSearchInput] = useState('');
   const [lang, setLang] = useState('es');
 
-  // --- BUSCADOR INTELIGENTE ---
   const ejecutarBusquedaInteligente = async (e) => {
     e.preventDefault();
     if (!searchInput.trim()) return;
     setIsLoading(true);
     try {
-        const queryUrl = `https://query2.finance.yahoo.com/v1/finance/search?q=${searchInput}`;
-        const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(queryUrl)}`);
+        const yahooSearch = "https://query2.finance.yahoo.com/v1/finance/search?q=" + searchInput;
+        const proxyUrl = "https://api.allorigins.win/get?url=" + encodeURIComponent(yahooSearch);
+        const res = await fetch(proxyUrl);
         const json = await res.json();
         const data = JSON.parse(json.contents);
         if (data.quotes && data.quotes.length > 0) {
@@ -55,14 +55,17 @@ function App() {
       try {
         let range = timeframe === '1M' ? '1mo' : timeframe === '6M' ? '6mo' : timeframe === '1Y' ? '1y' : timeframe === '5Y' ? '5y' : 'max';
         
-        // 1. FETCH DE DATOS CON PROXY ROBUSTO
-        const urlYahoo = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=${range}&interval=1d`;
-        const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(urlYahoo)}`);
+        // 1. OBTENER DATOS DE YAHOO MEDIANTE PROXY (SOLUCIÓN CORS)
+        const yahooUrl = "https://query1.finance.yahoo.com/v8/finance/chart/" + ticker + "?range=" + range + "&interval=1d";
+        const proxyUrl = "https://api.allorigins.win/get?url=" + encodeURIComponent(yahooUrl);
+        
+        const res = await fetch(proxyUrl);
         const wrapper = await res.json();
         const json = JSON.parse(wrapper.contents);
         
         if (!isMounted || !json.chart.result) return;
         const result = json.chart.result[0];
+        
         const candleData = result.timestamp.map((t, i) => ({
           time: new Date(t * 1000).toISOString().split('T')[0],
           open: result.indicators.quote[0].open[i],
@@ -73,9 +76,9 @@ function App() {
 
         candlestickSeries.setData(candleData);
 
-        // 2. FETCH DE NOTICIAS (RENDER)
-        // ⚠️ CAMBIA ESTA URL POR LA TUYA DE RENDER ⚠️
-        const urlRender = `https://mi-terminal-backend.onrender.com//api/analisis/${ticker}`; 
+        // 2. OBTENER NOTICIAS DE TU BACKEND EN RENDER
+        // CAMBIA ESTA URL POR LA TUYA DE RENDER
+        const urlRender = "https://mi-terminal-backend.onrender.com/api/analisis/" + ticker; 
         
         const resNews = await fetch(urlRender);
         const noticiasIA = await resNews.json();
@@ -103,7 +106,7 @@ function App() {
         }
         chart.timeScale().fitContent();
       } catch (e) { 
-        console.error("Error:", e); 
+        console.error("Error detallado:", e); 
       } finally { 
         if (isMounted) setIsLoading(false); 
       }
@@ -114,7 +117,7 @@ function App() {
     
     return () => { 
       isMounted = false; 
-      chart.remove();
+      if(chartInstance.current) chartInstance.current.remove();
     };
   }, [ticker, timeframe]);
 
@@ -126,7 +129,7 @@ function App() {
             <h2 style={{ margin: 0 }}>{ticker} <span style={{ color: '#787B86', fontSize: '14px' }}>Terminal</span></h2>
             <div style={{ display: 'flex', gap: '15px' }}>
               <button onClick={() => setLang(lang === 'es' ? 'en' : 'es')} style={{ padding: '5px 10px', backgroundColor: '#1E222D', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>{lang.toUpperCase()}</button>
-              <form onSubmit={ejecutarBusquedaInteligente}><input value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="Buscar activo..." style={{ padding: '8px', borderRadius: '6px', border: '1px solid #2B2B43', backgroundColor: '#1E222D', color: 'white' }} /></form>
+              <form onSubmit={ejecutarBusquedaInteligente}><input value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="Buscar..." style={{ padding: '8px', borderRadius: '6px', border: '1px solid #2B2B43', backgroundColor: '#1E222D', color: 'white' }} /></form>
             </div>
           </div>
           <div style={{ display: 'flex', gap: '8px', marginBottom: '15px' }}>
