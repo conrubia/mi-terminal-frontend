@@ -112,7 +112,7 @@ function App() {
             return;
         }
 
-        const resNews = await fetch(`http://localhost:8000/api/analisis/${ticker}`);
+        const resNews = await fetch(`https://mi-terminal-backend.onrender.com`);
         const noticiasIA = await resNews.json();
 
         if (!isMounted || !chartInstance.current) return;
