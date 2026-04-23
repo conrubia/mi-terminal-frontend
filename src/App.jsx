@@ -12,7 +12,7 @@ function App() {
   const [timeframe, setTimeframe] = useState('1Y');
   const [selectedNews, setSelectedNews] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [chartError, setChartError] = useState(null); // NUEVO: Chivato de errores
+  const [chartError, setChartError] = useState(null);
   const [searchInput, setSearchInput] = useState('');
 
   // ⚠️ PON TU URL DE RENDER AQUÍ (Sin barra al final)
@@ -52,15 +52,12 @@ function App() {
         const resP = await fetch(`${RENDER_URL}/api/precios/${ticker}?timeframe=${timeframe.toLowerCase()}`);
         const candleData = await resP.json();
         
-        // CHIVATO DE ERRORES: Si el backend manda error, lo mostramos en pantalla
         if (candleData.error) {
-            if (isMounted) setChartError(candleData.error);
-            return;
+            if (isMounted) setChartError(candleData.error); return;
         }
 
         if (!isMounted || !Array.isArray(candleData) || candleData.length === 0) {
-            if (isMounted) setChartError("No se recibieron datos válidos.");
-            return;
+            if (isMounted) setChartError("No se recibieron datos válidos."); return;
         }
 
         candleSeries.setData(candleData);
@@ -71,31 +68,23 @@ function App() {
         if (Array.isArray(newsData) && isMounted) {
             const markers = [];
             const localNewsMap = {};
-
-            // 1. Agrupar noticias por fecha exacta (Y-M-D)
             const noticiasPorFecha = {};
+
             newsData.forEach(news => {
-                const fechaCorta = news.fecha.split(' ')[0]; // Asegurar que solo sea YYYY-MM-DD
-                if (!noticiasPorFecha[fechaCorta]) {
-                    noticiasPorFecha[fechaCorta] = [];
-                }
+                const fechaCorta = news.fecha.split(' ')[0];
+                if (!noticiasPorFecha[fechaCorta]) noticiasPorFecha[fechaCorta] = [];
                 noticiasPorFecha[fechaCorta].push(news);
             });
 
-            // 2. Crear un solo marcador por fecha en el gráfico
             Object.keys(noticiasPorFecha).forEach(fecha => {
-                // Comprobamos si hay una vela exactamente en esa fecha
                 const existeVela = candleData.find(d => d.time === fecha);
-                
                 if (existeVela) {
-                    // Tomamos la noticia más reciente de ese día
                     const noticiaPrincipal = noticiasPorFecha[fecha][0];
-                    
                     localNewsMap[fecha] = noticiaPrincipal;
                     markers.push({ 
                         time: fecha, 
                         position: 'aboveBar', 
-                        color: '#2962FF', 
+                        color: noticiaPrincipal.color, // <-- AHORA USA EL COLOR DE LA IA
                         shape: 'circle', 
                         text: 'N' 
                     });
@@ -107,7 +96,6 @@ function App() {
         }
         chart.timeScale().fitContent();
       } catch (e) { 
-        console.error(e); 
         if (isMounted) setChartError("Fallo de conexión con el servidor.");
       } finally { 
         if (isMounted) setIsLoading(false); 
@@ -132,7 +120,6 @@ function App() {
       `}</style>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '20px', maxWidth: '1400px', margin: '0 auto', alignItems: 'stretch' }}>
-        
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
             <h2 style={{ margin: 0 }}>{ticker} <span style={{ color: '#787B86', fontSize: '14px' }}>Terminal</span></h2>
@@ -148,10 +135,8 @@ function App() {
           </div>
 
           <div style={{ position: 'relative', border: '1px solid #2B2B43', borderRadius: '8px', overflow: 'hidden', flexGrow: 1, minHeight: '600px', backgroundColor: '#131722' }}>
-            {/* EL LIENZO DEL GRÁFICO */}
             <div ref={chartContainerRef} style={{ height: '100%', width: '100%' }} />
             
-            {/* PANTALLA DE CARGA VISIBLE */}
             {isLoading && (
               <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(19, 23, 34, 0.85)', zIndex: 10 }}>
                 <div className="loader"></div>
@@ -159,22 +144,30 @@ function App() {
               </div>
             )}
 
-            {/* PANTALLA DE ERROR VISIBLE (El Chivato) */}
             {chartError && !isLoading && (
               <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(239, 83, 80, 0.1)', zIndex: 10, padding: '20px', textAlign: 'center' }}>
                 <span style={{ fontSize: '40px', marginBottom: '10px' }}>⚠️</span>
                 <h3 style={{ color: '#ef5350', margin: 0 }}>Error al cargar gráfico</h3>
                 <p style={{ color: '#d1d4dc' }}>{chartError}</p>
-                <p style={{ color: '#787B86', fontSize: '12px' }}>Intenta buscar otro Ticker válido (Ej: MSFT, TSLA)</p>
               </div>
             )}
 
-            {/* POP-UP DE NOTICIAS */}
+            {/* POP-UP DE NOTICIAS CON IMPACTO */}
             {selectedNews && !isLoading && !chartError && (
-               <div style={{ position: 'absolute', top: '20px', left: '20px', width: '300px', backgroundColor: '#1E222D', borderLeft: '4px solid #2962FF', padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
-                  <div style={{ fontSize: '11px', color: '#787B86', display: 'flex', justifyContent: 'space-between' }}><span>{selectedNews.fuente}</span><span style={{ cursor: 'pointer' }} onClick={() => setSelectedNews(null)}>✕</span></div>
+               <div style={{ position: 'absolute', top: '20px', left: '20px', width: '300px', backgroundColor: '#1E222D', borderLeft: `4px solid ${selectedNews.color}`, padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
+                  <div style={{ fontSize: '11px', color: '#787B86', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>{selectedNews.fuente}</span>
+                    <span style={{ cursor: 'pointer', padding: '0 5px' }} onClick={() => setSelectedNews(null)}>✕</span>
+                  </div>
                   <p style={{ fontWeight: 'bold', fontSize: '14px', margin: '10px 0', lineHeight: '1.4' }}>{selectedNews.titulo}</p>
-                  <a href={selectedNews.url} target="_blank" rel="noreferrer" style={{ color: '#26a69a', textDecoration: 'none', fontSize: '12px', fontWeight: 'bold' }}>Leer original ↗</a>
+                  
+                  {/* BARRA INFERIOR DEL POPUP: IMPACTO Y BOTÓN */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px', borderTop: '1px solid #2B2B43', paddingTop: '10px' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 'bold', color: selectedNews.color, backgroundColor: 'rgba(255,255,255,0.05)', padding: '4px 8px', borderRadius: '4px' }}>
+                      Impacto: {selectedNews.impacto}
+                    </span>
+                    <a href={selectedNews.url} target="_blank" rel="noreferrer" style={{ color: '#d1d4dc', textDecoration: 'none', fontSize: '12px', fontWeight: 'bold' }}>Leer ↗</a>
+                  </div>
                 </div>
             )}
           </div>
