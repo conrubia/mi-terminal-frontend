@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { createChart, CandlestickSeries, HistogramSeries } from 'lightweight-charts';
+import { createChart, CandlestickSeries, HistogramSeries, createSeriesMarkers } from 'lightweight-charts';
 import EconomicCalendar from "./EconomicCalendar";
 import FearAndGreed from "./FearAndGreed";
 
@@ -10,6 +10,7 @@ function App() {
   
   const [ticker, setTicker] = useState('AAPL');
   const [timeframe, setTimeframe] = useState('1Y');
+  
   const [selectedItem, setSelectedItem] = useState({ noticia: null, evento: null }); 
   const [isLoading, setIsLoading] = useState(true);
   const [chartError, setChartError] = useState(null);
@@ -48,16 +49,16 @@ function App() {
     });
 
     const volumeSeries = chart.addSeries(HistogramSeries, {
-        color: '#26a69a',
-        priceFormat: { type: 'volume' },
-        priceScaleId: '', 
+      color: '#26a69a',
+      priceFormat: { type: 'volume' },
+      priceScaleId: '', // Overlay mode
     });
 
     volumeSeries.priceScale().applyOptions({
-        scaleMargins: {
-            top: 0.8,
-            bottom: 0,
-        },
+      scaleMargins: {
+        top: 0.8, // Deja el volumen en el 20% inferior
+        bottom: 0,
+      },
     });
 
     const fetchData = async () => {
@@ -72,19 +73,22 @@ function App() {
 
         const volumeData = candleData.map(d => ({
             time: d.time,
-            value: d.value,
+            value: d.value || 0,
             color: d.close >= d.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
         }));
         volumeSeries.setData(volumeData);
 
-        const resN = await fetch(`${RENDER_URL}/api/analisis/${ticker}`);
-        const resE = await fetch(`${RENDER_URL}/api/eventos_macro`);
+        const [resN, resE] = await Promise.all([
+          fetch(`${RENDER_URL}/api/analisis/${ticker}`),
+          fetch(`${RENDER_URL}/api/eventos_macro`)
+        ]);
         
         const newsData = await resN.json();
         const eventsData = await resE.json();
 
         if (isMounted) {
-            const markers = [];
+            const candleMarkers = []; // Aquí irán las Noticias (Arriba)
+            const volumeMarkers = []; // Aquí irán los Eventos (Abajo)
             const localInteractiveMap = {};
 
             const encontrarVelaCercana = (fechaObjetivo) => {
@@ -93,7 +97,7 @@ function App() {
                 });
             };
 
-            // EVENTOS MACRO (Solucionado: belowBar y tamaño entero)
+            // --- A) EVENTOS MACRO (Añadidos a la serie de Volumen para estar abajo) ---
             if (Array.isArray(eventsData)) {
                 eventsData.forEach(evento => {
                     const velaMatch = encontrarVelaCercana(evento.fecha);
@@ -101,19 +105,19 @@ function App() {
                         if (!localInteractiveMap[velaMatch.time]) localInteractiveMap[velaMatch.time] = { noticia: null, evento: null };
                         localInteractiveMap[velaMatch.time].evento = evento;
                         
-                        markers.push({ 
+                        volumeMarkers.push({ 
                             time: velaMatch.time, 
-                            position: 'belowBar', 
+                            position: 'belowBar', // Se coloca debajo de la barra de volumen
                             color: evento.color || '#FF9800', 
                             shape: 'square', 
                             text: 'E',
-                            size: 2
+                            size: 1 // Debe ser entero
                         });
                     }
                 });
             }
 
-            // NOTICIAS IA
+            // --- B) NOTICIAS IA (Añadidas a la serie de Velas para estar arriba) ---
             if (Array.isArray(newsData)) {
                 const noticiasPorFecha = {};
                 newsData.forEach(news => {
@@ -130,13 +134,13 @@ function App() {
                         
                         if (!localInteractiveMap[velaMatch.time].noticia) {
                             localInteractiveMap[velaMatch.time].noticia = noticiaPrincipal;
-                            markers.push({ 
+                            candleMarkers.push({ 
                                 time: velaMatch.time, 
                                 position: 'aboveBar', 
                                 color: noticiaPrincipal.color, 
                                 shape: 'circle', 
                                 text: 'N',
-                                size: 1
+                                size: 1 // Debe ser entero
                             });
                         }
                     }
@@ -144,12 +148,17 @@ function App() {
             }
 
             interactiveMapRef.current = localInteractiveMap;
-            markers.sort((a, b) => new Date(a.time) - new Date(b.time));
-            candleSeries.setMarkers(markers);
+            
+            candleMarkers.sort((a, b) => new Date(a.time) - new Date(b.time));
+            volumeMarkers.sort((a, b) => new Date(a.time) - new Date(b.time));
+            
+            // Asignamos los marcadores a sus respectivas series (Sintaxis correcta de v5)
+            createSeriesMarkers(candleSeries, candleMarkers);
+            createSeriesMarkers(volumeSeries, volumeMarkers);
         }
         chart.timeScale().fitContent();
       } catch (e) { 
-        if (isMounted) setChartError(e.message); // Chivato real de error
+        if (isMounted) setChartError(e.message);
       } finally { 
         if (isMounted) setIsLoading(false); 
       }
@@ -169,6 +178,7 @@ function App() {
     return () => { isMounted = false; chart.remove(); };
   }, [ticker, timeframe]);
 
+  // --- TARJETAS EMERGENTES ---
   const PopupNoticia = ({ data, onClose }) => (
     <div style={{ position: 'absolute', top: '20px', left: '20px', width: '300px', backgroundColor: '#1E222D', borderLeft: `4px solid ${data.color}`, padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
       <div style={{ fontSize: '11px', color: '#787B86', display: 'flex', justifyContent: 'space-between' }}>
@@ -232,6 +242,7 @@ function App() {
               </div>
             )}
 
+            {/* RENDERIZA AMBOS POPUPS SI EXISTEN SIMULTÁNEAMENTE */}
             {selectedItem?.noticia && !isLoading && !chartError && (
               <PopupNoticia data={selectedItem.noticia} onClose={() => setSelectedItem(prev => ({ ...prev, noticia: null }))} />
             )}
