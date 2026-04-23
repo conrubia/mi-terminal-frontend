@@ -38,7 +38,7 @@ function App() {
       grid: { vertLines: { color: '#2B2B43' }, horzLines: { color: '#2B2B43' } },
       width: chartContainerRef.current.clientWidth,
       height: 600,
-      crosshair: { mode: 0 }
+      timeScale: { borderVisible: false }
     });
     chartInstance.current = chart;
 
@@ -47,19 +47,16 @@ function App() {
       upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350',
     });
 
-    // 2. Serie de Volumen (Histograma)
+    // 2. Serie de Volumen (Histograma en la parte inferior)
     const volumeSeries = chart.addSeries(HistogramSeries, {
-        color: '#26a69a',
-        priceFormat: { type: 'volume' },
-        priceScaleId: '', // Overlay mode
+      color: '#26a69a',
+      priceFormat: { type: 'volume' },
+      priceScaleId: '', // Esto lo convierte en un overlay
     });
 
-    // Ajustamos el volumen para que se quede abajo (20% del gráfico)
+    // Forzamos el volumen al 20% inferior
     volumeSeries.priceScale().applyOptions({
-        scaleMargins: {
-            top: 0.8,
-            bottom: 0,
-        },
+      scaleMargins: { top: 0.8, bottom: 0 },
     });
 
     const fetchData = async () => {
@@ -68,109 +65,82 @@ function App() {
         const candleData = await resP.json();
         
         if (candleData.error) { if (isMounted) setChartError(candleData.error); return; }
-        if (!isMounted || !Array.isArray(candleData) || candleData.length === 0) { if (isMounted) setChartError("Sin datos."); return; }
         
-        // Cargamos las velas
         candleSeries.setData(candleData);
-
-        // Cargamos el volumen con colores dinámicos
+        
+        // Mapeamos el volumen con colores (verde si sube, rojo si baja)
         const volumeData = candleData.map(d => ({
-            time: d.time,
-            value: d.value,
-            color: d.close >= d.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
+          time: d.time,
+          value: d.value || 0,
+          color: d.close >= d.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
         }));
         volumeSeries.setData(volumeData);
 
         const [resN, resE] = await Promise.all([
-          fetch(`${RENDER_URL}/api/analisis/${ticker}`),
-          fetch(`${RENDER_URL}/api/eventos_macro`)
+          fetch(`${RENDER_URL}/api/analisis/${ticker}`).then(r => r.json()),
+          fetch(`${RENDER_URL}/api/eventos_macro`).then(r => r.json())
         ]);
-        
-        const newsData = await resN.json();
-        const eventsData = await resE.json();
 
         if (isMounted) {
             const markers = [];
-            const localInteractiveMap = {};
+            const localMap = {};
+            const encontrarVela = (f) => candleData.reduce((p, c) => (Math.abs(new Date(c.time) - new Date(f)) < Math.abs(new Date(p.time) - new Date(f)) ? c : p));
 
-            const encontrarVelaCercana = (fechaObjetivo) => {
-                return candleData.reduce((prev, curr) => {
-                    return (Math.abs(new Date(curr.time) - new Date(fechaObjetivo)) < Math.abs(new Date(prev.time) - new Date(fechaObjetivo)) ? curr : prev);
-                });
-            };
-
-            // --- A) EVENTOS MACRO (Ahora abajo del todo) ---
-            if (Array.isArray(eventsData)) {
-                eventsData.forEach(evento => {
-                    const velaMatch = encontrarVelaCercana(evento.fecha);
-                    if (velaMatch) {
-                        if (!localInteractiveMap[velaMatch.time]) localInteractiveMap[velaMatch.time] = { noticia: null, evento: null };
-                        localInteractiveMap[velaMatch.time].evento = evento;
-                        
-                        markers.push({ 
-                            time: velaMatch.time, 
-                            position: 'atTheBottom', // <-- CAMBIADO: Se pega al eje X
-                            color: evento.color || '#FF9800', 
-                            shape: 'square', 
-                            text: 'E',
-                            size: 2
-                        });
-                    }
+            // --- A) EVENTOS MACRO (ABBAJO DEL TODO) ---
+            if (Array.isArray(resE)) {
+              resE.forEach(e => {
+                    const v = encontrarVela(e.fecha);
+                    if (!localMap[v.time]) localMap[v.time] = { noticia: null, evento: null };
+                    localMap[v.time].evento = e;
+                    markers.push({ 
+                      time: v.time, 
+                      position: 'atTheBottom', // <--- POSICIÓN CORREGIDA
+                      color: e.color || '#FF9800', 
+                      shape: 'square', 
+                      text: 'E',
+                      size: 2
+                    });
                 });
             }
 
-            // --- B) NOTICIAS IA ---
-            if (Array.isArray(newsData)) {
-                const noticiasPorFecha = {};
-                newsData.forEach(news => {
-                    const fechaCorta = news.fecha.split(' ')[0];
-                    if (!noticiasPorFecha[fechaCorta]) noticiasPorFecha[fechaCorta] = [];
-                    noticiasPorFecha[fechaCorta].push(news);
-                });
-
-                Object.keys(noticiasPorFecha).forEach(fecha => {
-                    const velaMatch = encontrarVelaCercana(fecha);
-                    if (velaMatch) {
-                        const noticiaPrincipal = noticiasPorFecha[fecha][0];
-                        if (!localInteractiveMap[velaMatch.time]) localInteractiveMap[velaMatch.time] = { noticia: null, evento: null };
-                        if (!localInteractiveMap[velaMatch.time].noticia) {
-                            localInteractiveMap[velaMatch.time].noticia = noticiaPrincipal;
-                            markers.push({ 
-                                time: velaMatch.time, 
-                                position: 'aboveBar', 
-                                color: noticiaPrincipal.color, 
-                                shape: 'circle', 
-                                text: 'N',
-                                size: 1
-                            });
-                        }
-                    }
+            // --- B) NOTICIAS IA (ARRIBA) ---
+            if (Array.isArray(resN)) {
+                resN.forEach(n => {
+                    const v = encontrarVela(n.fecha);
+                    if (!localMap[v.time]) localMap[v.time] = { noticia: null, evento: null };
+                    localMap[v.time].noticia = n;
+                    markers.push({ 
+                      time: v.time, 
+                      position: 'aboveBar', 
+                      color: n.color, 
+                      shape: 'circle', 
+                      text: 'N',
+                      size: 1
+                    });
                 });
             }
 
-            interactiveMapRef.current = localInteractiveMap;
+            interactiveMapRef.current = localMap;
             markers.sort((a, b) => new Date(a.time) - new Date(b.time));
             createSeriesMarkers(candleSeries, markers);
         }
         chart.timeScale().fitContent();
       } catch (e) { 
-        if (isMounted) setChartError("Fallo de conexión.");
+        if (isMounted) setChartError("Error de sincronización.");
       } finally { 
         if (isMounted) setIsLoading(false); 
       }
     };
 
     fetchData();
-    
     chart.subscribeClick((p) => {
         const d = p.time ? (typeof p.time === 'string' ? p.time : `${p.time.year}-${String(p.time.month).padStart(2, '0')}-${String(p.time.day).padStart(2, '0')}`) : null;
         if (d && interactiveMapRef.current[d]) {
-            setSelectedItem(interactiveMapRef.current[d]);
+          setSelectedItem(interactiveMapRef.current[d]);
         } else {
-            setSelectedItem({ noticia: null, evento: null });
+          setSelectedItem({ noticia: null, evento: null });
         }
     });
-
     return () => { isMounted = false; chart.remove(); };
   }, [ticker, timeframe]);
 
