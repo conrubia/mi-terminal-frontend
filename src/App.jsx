@@ -7,8 +7,11 @@ function App() {
   const chartContainerRef = useRef(null);
   const chartInstance = useRef(null); 
   const interactiveMapRef = useRef({}); 
+  const dataRef = useRef({ candle: [], news: [], events: [] });
+  const seriesRef = useRef({ candle: null, volume: null });
   
-  const [ticker, setTicker] = useState('AAPL');
+  // 19. URL Dinámica
+  const [ticker, setTicker] = useState(() => new URLSearchParams(window.location.search).get('ticker') || 'AAPL');
   const [timeframe, setTimeframe] = useState('1Y');
   
   const [selectedItem, setSelectedItem] = useState({ noticia: null, evento: null }); 
@@ -16,8 +19,34 @@ function App() {
   const [chartError, setChartError] = useState(null);
   const [searchInput, setSearchInput] = useState('');
 
-  // ⚠️ PON TU URL DE RENDER AQUÍ (Sin barra al final)
+  // Estados de las nuevas funcionalidades
+  const [marketData, setMarketData] = useState([]); // 16. Cinta de Cotizaciones
+  const [tickerInfo, setTickerInfo] = useState(null); // 13 y 4. Perfil y Cambio
+  const [favorites, setFavorites] = useState(() => JSON.parse(localStorage.getItem('terminal_favs')) || ['AAPL', 'MSFT', 'TSLA', 'NVDA']); // 1. Favoritos
+  const [newsFilter, setNewsFilter] = useState('ALL'); // 15. Filtro IA
+  const [crosshairData, setCrosshairData] = useState(null); // 12. OHLC
+
+  // ⚠️ PON TU URL DE RENDER AQUÍ
   const RENDER_URL = "https://mi-terminal-backend.onrender.com"; 
+
+  // --- LÓGICA DE INICIALIZACIÓN ---
+  useEffect(() => {
+    // 16. Cargar la cinta de cotizaciones
+    fetch(`${RENDER_URL}/api/mercado`).then(r => r.json()).then(d => setMarketData(d)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    // 19. Actualizar URL dinámica al cambiar el Ticker
+    window.history.replaceState(null, '', `?ticker=${ticker}`);
+  }, [ticker]);
+
+  const toggleFavorite = () => {
+    let favs = [...favorites];
+    if (favs.includes(ticker)) favs = favs.filter(t => t !== ticker);
+    else favs.push(ticker);
+    setFavorites(favs);
+    localStorage.setItem('terminal_favs', JSON.stringify(favs));
+  };
 
   const manejarBusqueda = (e) => {
     e.preventDefault();
@@ -28,6 +57,76 @@ function App() {
     }
   };
 
+  // --- MOTOR DE MARCADORES (Filtros, Eventos y Max/Min) ---
+  const aplicarMarcadores = (filtro) => {
+    const { candle, news, events } = dataRef.current;
+    if (!seriesRef.current.candle || !seriesRef.current.volume || !candle.length) return;
+
+    const candleMarkers = [];
+    const volumeMarkers = [];
+    const localMap = {};
+
+    const encontrarVela = (f) => candle.reduce((p, c) => (Math.abs(new Date(c.time) - new Date(f)) < Math.abs(new Date(p.time) - new Date(f)) ? c : p));
+
+    // A) EVENTOS MACRO -> VOLUMEN (ABAJO)
+    if (Array.isArray(events)) {
+        events.forEach(e => {
+            const v = encontrarVela(e.fecha);
+            if (v) {
+                if (!localMap[v.time]) localMap[v.time] = { noticia: null, evento: null };
+                localMap[v.time].evento = e;
+                volumeMarkers.push({ time: v.time, position: 'belowBar', color: e.color || '#FF9800', shape: 'square', text: 'E', size: 1 });
+            }
+        });
+    }
+
+    // B) NOTICIAS IA -> VELAS (ARRIBA) CON FILTRO #15
+    if (Array.isArray(news)) {
+        const noticiasPorFecha = {};
+        news.forEach(n => {
+            if (filtro === 'ALCISTA' && n.impacto !== 'Alcista') return;
+            if (filtro === 'BAJISTA' && n.impacto !== 'Bajista') return;
+            if (filtro === 'NEUTRAL' && n.impacto !== 'Neutral') return;
+
+            const fCorta = n.fecha.split(' ')[0];
+            if (!noticiasPorFecha[fCorta]) noticiasPorFecha[fCorta] = [];
+            noticiasPorFecha[fCorta].push(n);
+        });
+
+        Object.keys(noticiasPorFecha).forEach(fecha => {
+            const v = encontrarVela(fecha);
+            if (v) {
+                const n = noticiasPorFecha[fecha][0];
+                if (!localMap[v.time]) localMap[v.time] = { noticia: null, evento: null };
+                if (!localMap[v.time].noticia) {
+                    localMap[v.time].noticia = n;
+                    candleMarkers.push({ time: v.time, position: 'aboveBar', color: n.color, shape: 'circle', text: 'N', size: 1 });
+                }
+            }
+        });
+    }
+
+    // C) 11. ETIQUETAS MÁXIMO Y MÍNIMO DEL PERIODO
+    let max = -Infinity, min = Infinity, maxTime, minTime;
+    candle.forEach(d => {
+        if (d.high > max) { max = d.high; maxTime = d.time; }
+        if (d.low < min) { min = d.low; minTime = d.time; }
+    });
+    if (maxTime) candleMarkers.push({ time: maxTime, position: 'aboveBar', color: '#787B86', shape: 'arrowDown', text: `Máx ${max.toFixed(2)}`, size: 1 });
+    if (minTime) candleMarkers.push({ time: minTime, position: 'belowBar', color: '#787B86', shape: 'arrowUp', text: `Mín ${min.toFixed(2)}`, size: 1 });
+
+    interactiveMapRef.current = localMap;
+    candleMarkers.sort((a, b) => new Date(a.time) - new Date(b.time));
+    volumeMarkers.sort((a, b) => new Date(a.time) - new Date(b.time));
+    
+    createSeriesMarkers(seriesRef.current.candle, candleMarkers);
+    createSeriesMarkers(seriesRef.current.volume, volumeMarkers);
+  };
+
+  // Escuchador del Filtro de Noticias
+  useEffect(() => { aplicarMarcadores(newsFilter); }, [newsFilter]);
+
+  // --- LÓGICA PRINCIPAL DEL GRÁFICO ---
   useEffect(() => {
     if (!chartContainerRef.current) return;
     let isMounted = true;
@@ -40,26 +139,22 @@ function App() {
       grid: { vertLines: { color: '#2B2B43' }, horzLines: { color: '#2B2B43' } },
       width: chartContainerRef.current.clientWidth,
       height: 600,
-      crosshair: { mode: 0 }
+      crosshair: { mode: 0 },
+      // 9. MARCA DE AGUA DEL TICKER
+      watermark: { visible: true, fontSize: 120, horzAlign: 'center', vertAlign: 'center', color: 'rgba(255, 255, 255, 0.03)', text: ticker },
     });
     chartInstance.current = chart;
 
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350',
     });
+    // 10. Línea de precio actual
+    candleSeries.applyOptions({ lastValueVisible: true, priceLineVisible: true });
 
-    const volumeSeries = chart.addSeries(HistogramSeries, {
-      color: '#26a69a',
-      priceFormat: { type: 'volume' },
-      priceScaleId: '', // Overlay mode
-    });
+    const volumeSeries = chart.addSeries(HistogramSeries, { color: '#26a69a', priceFormat: { type: 'volume' }, priceScaleId: '' });
+    volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
 
-    volumeSeries.priceScale().applyOptions({
-      scaleMargins: {
-        top: 0.8, // Deja el volumen en el 20% inferior
-        bottom: 0,
-      },
-    });
+    seriesRef.current = { candle: candleSeries, volume: volumeSeries };
 
     const fetchData = async () => {
       try {
@@ -70,95 +165,22 @@ function App() {
         if (!isMounted || !Array.isArray(candleData) || candleData.length === 0) { if (isMounted) setChartError("Sin datos."); return; }
         
         candleSeries.setData(candleData);
+        volumeSeries.setData(candleData.map(d => ({ time: d.time, value: d.value || 0, color: d.close >= d.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)' })));
 
-        const volumeData = candleData.map(d => ({
-            time: d.time,
-            value: d.value || 0,
-            color: d.close >= d.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
-        }));
-        volumeSeries.setData(volumeData);
-
-        const [resN, resE] = await Promise.all([
-          fetch(`${RENDER_URL}/api/analisis/${ticker}`),
-          fetch(`${RENDER_URL}/api/eventos_macro`)
+        const [resN, resE, resInfo] = await Promise.all([
+          fetch(`${RENDER_URL}/api/analisis/${ticker}`).then(r => r.json()),
+          fetch(`${RENDER_URL}/api/eventos_macro`).then(r => r.json()),
+          fetch(`${RENDER_URL}/api/info/${ticker}`).then(r => r.json()) // 13. Perfil de empresa
         ]);
-        
-        const newsData = await resN.json();
-        const eventsData = await resE.json();
 
         if (isMounted) {
-            const candleMarkers = []; // Aquí irán las Noticias (Arriba)
-            const volumeMarkers = []; // Aquí irán los Eventos (Abajo)
-            const localInteractiveMap = {};
-
-            const encontrarVelaCercana = (fechaObjetivo) => {
-                return candleData.reduce((prev, curr) => {
-                    return (Math.abs(new Date(curr.time) - new Date(fechaObjetivo)) < Math.abs(new Date(prev.time) - new Date(fechaObjetivo)) ? curr : prev);
-                });
-            };
-
-            // --- A) EVENTOS MACRO (Añadidos a la serie de Volumen para estar abajo) ---
-            if (Array.isArray(eventsData)) {
-                eventsData.forEach(evento => {
-                    const velaMatch = encontrarVelaCercana(evento.fecha);
-                    if (velaMatch) {
-                        if (!localInteractiveMap[velaMatch.time]) localInteractiveMap[velaMatch.time] = { noticia: null, evento: null };
-                        localInteractiveMap[velaMatch.time].evento = evento;
-                        
-                        volumeMarkers.push({ 
-                            time: velaMatch.time, 
-                            position: 'belowBar', // Se coloca debajo de la barra de volumen
-                            color: evento.color || '#FF9800', 
-                            shape: 'square', 
-                            text: 'E',
-                            size: 1 // Debe ser entero
-                        });
-                    }
-                });
-            }
-
-            // --- B) NOTICIAS IA (Añadidas a la serie de Velas para estar arriba) ---
-            if (Array.isArray(newsData)) {
-                const noticiasPorFecha = {};
-                newsData.forEach(news => {
-                    const fechaCorta = news.fecha.split(' ')[0];
-                    if (!noticiasPorFecha[fechaCorta]) noticiasPorFecha[fechaCorta] = [];
-                    noticiasPorFecha[fechaCorta].push(news);
-                });
-
-                Object.keys(noticiasPorFecha).forEach(fecha => {
-                    const velaMatch = encontrarVelaCercana(fecha);
-                    if (velaMatch) {
-                        const noticiaPrincipal = noticiasPorFecha[fecha][0];
-                        if (!localInteractiveMap[velaMatch.time]) localInteractiveMap[velaMatch.time] = { noticia: null, evento: null };
-                        
-                        if (!localInteractiveMap[velaMatch.time].noticia) {
-                            localInteractiveMap[velaMatch.time].noticia = noticiaPrincipal;
-                            candleMarkers.push({ 
-                                time: velaMatch.time, 
-                                position: 'aboveBar', 
-                                color: noticiaPrincipal.color, 
-                                shape: 'circle', 
-                                text: 'N',
-                                size: 1 // Debe ser entero
-                            });
-                        }
-                    }
-                });
-            }
-
-            interactiveMapRef.current = localInteractiveMap;
-            
-            candleMarkers.sort((a, b) => new Date(a.time) - new Date(b.time));
-            volumeMarkers.sort((a, b) => new Date(a.time) - new Date(b.time));
-            
-            // Asignamos los marcadores a sus respectivas series (Sintaxis correcta de v5)
-            createSeriesMarkers(candleSeries, candleMarkers);
-            createSeriesMarkers(volumeSeries, volumeMarkers);
+            dataRef.current = { candle: candleData, news: resN, events: resE };
+            setTickerInfo(resInfo);
+            aplicarMarcadores(newsFilter); // Dispara el motor con el filtro actual
         }
         chart.timeScale().fitContent();
       } catch (e) { 
-        if (isMounted) setChartError(e.message);
+        if (isMounted) setChartError("Fallo de conexión."); 
       } finally { 
         if (isMounted) setIsLoading(false); 
       }
@@ -168,66 +190,125 @@ function App() {
     
     chart.subscribeClick((p) => {
         const d = p.time ? (typeof p.time === 'string' ? p.time : `${p.time.year}-${String(p.time.month).padStart(2, '0')}-${String(p.time.day).padStart(2, '0')}`) : null;
-        if (d && interactiveMapRef.current[d]) {
-            setSelectedItem(interactiveMapRef.current[d]);
+        if (d && interactiveMapRef.current[d]) setSelectedItem(interactiveMapRef.current[d]);
+        else setSelectedItem({ noticia: null, evento: null });
+    });
+
+    // 12. SINCRONIZACIÓN CROSSHAIR (OHLC)
+    chart.subscribeCrosshairMove((param) => {
+        if (param.time && param.seriesData.get(seriesRef.current.candle)) {
+            setCrosshairData(param.seriesData.get(seriesRef.current.candle));
         } else {
-            setSelectedItem({ noticia: null, evento: null });
+            setCrosshairData(null);
         }
     });
 
     return () => { isMounted = false; chart.remove(); };
-  }, [ticker, timeframe]);
+  }, [ticker, timeframe]); // Nota: newsFilter NO está aquí, para no recargar la gráfica al filtrar.
 
-  // --- TARJETAS EMERGENTES ---
+  // Componentes de Tarjetas
   const PopupNoticia = ({ data, onClose }) => (
-    <div style={{ position: 'absolute', top: '20px', left: '20px', width: '300px', backgroundColor: '#1E222D', borderLeft: `4px solid ${data.color}`, padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
-      <div style={{ fontSize: '11px', color: '#787B86', display: 'flex', justifyContent: 'space-between' }}>
-        <span>📰 {data.fuente}</span>
-        <span style={{ cursor: 'pointer', padding: '0 5px' }} onClick={onClose}>✕</span>
-      </div>
-      <p style={{ fontWeight: 'bold', fontSize: '14px', margin: '10px 0', lineHeight: '1.4' }}>{data.titulo}</p>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px', borderTop: '1px solid #2B2B43', paddingTop: '10px' }}>
-        <span style={{ fontSize: '12px', fontWeight: 'bold', color: data.color, backgroundColor: 'rgba(255,255,255,0.05)', padding: '4px 8px', borderRadius: '4px' }}>Impacto: {data.impacto}</span>
-        <a href={data.url} target="_blank" rel="noreferrer" style={{ color: '#d1d4dc', textDecoration: 'none', fontSize: '12px', fontWeight: 'bold' }}>Leer ↗</a>
-      </div>
-    </div>
+    <div style={{ position: 'absolute', top: '40px', left: '20px', width: '300px', backgroundColor: '#1E222D', borderLeft: `4px solid ${data.color}`, padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}><div style={{ fontSize: '11px', color: '#787B86', display: 'flex', justifyContent: 'space-between' }}><span>📰 {data.fuente}</span><span style={{ cursor: 'pointer', padding: '0 5px' }} onClick={onClose}>✕</span></div><p style={{ fontWeight: 'bold', fontSize: '14px', margin: '10px 0', lineHeight: '1.4' }}>{data.titulo}</p><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px', borderTop: '1px solid #2B2B43', paddingTop: '10px' }}><span style={{ fontSize: '12px', fontWeight: 'bold', color: data.color, backgroundColor: 'rgba(255,255,255,0.05)', padding: '4px 8px', borderRadius: '4px' }}>Impacto: {data.impacto}</span><a href={data.url} target="_blank" rel="noreferrer" style={{ color: '#d1d4dc', textDecoration: 'none', fontSize: '12px', fontWeight: 'bold' }}>Leer ↗</a></div></div>
   );
-
   const PopupEventoMacro = ({ data, onClose }) => (
-    <div style={{ position: 'absolute', bottom: '20px', right: '20px', width: '280px', backgroundColor: '#2a1a1a', border: `1px solid ${data.color}`, borderRadius: '6px', padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
-      <div style={{ fontSize: '11px', color: '#FF9800', display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontWeight: 'bold' }}>
-        <span>⚠️ EVENTO MACRO (3 TOROS)</span>
-        <span style={{ cursor: 'pointer', padding: '0 5px', color: '#d1d4dc' }} onClick={onClose}>✕</span>
-      </div>
-      <p style={{ fontWeight: 'bold', fontSize: '15px', margin: '0 0 15px 0', color: 'white' }}>{data.titulo}</p>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '5px', textAlign: 'center', backgroundColor: 'rgba(0,0,0,0.3)', padding: '10px', borderRadius: '4px' }}>
-        <div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Actual</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: 'white' }}>{data.actual}</div></div>
-        <div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Prev</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: '#d1d4dc' }}>{data.prev}</div></div>
-        <div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Anterior</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: '#787B86' }}>{data.ant}</div></div>
-      </div>
-    </div>
+    <div style={{ position: 'absolute', bottom: '20px', right: '20px', width: '280px', backgroundColor: '#2a1a1a', border: `1px solid ${data.color}`, borderRadius: '6px', padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}><div style={{ fontSize: '11px', color: '#FF9800', display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontWeight: 'bold' }}><span>⚠️ EVENTO MACRO (3 TOROS)</span><span style={{ cursor: 'pointer', padding: '0 5px', color: '#d1d4dc' }} onClick={onClose}>✕</span></div><p style={{ fontWeight: 'bold', fontSize: '15px', margin: '0 0 15px 0', color: 'white' }}>{data.titulo}</p><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '5px', textAlign: 'center', backgroundColor: 'rgba(0,0,0,0.3)', padding: '10px', borderRadius: '4px' }}><div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Actual</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: 'white' }}>{data.actual}</div></div><div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Prev</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: '#d1d4dc' }}>{data.prev}</div></div><div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Anterior</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: '#787B86' }}>{data.ant}</div></div></div></div>
   );
 
   return (
-    <div style={{ padding: '20px', backgroundColor: '#0c0d10', minHeight: '100vh', color: 'white', fontFamily: 'sans-serif' }}>
-      <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } } .loader { border: 4px solid #1e222d; border-top: 4px solid #26a69a; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 15px; }`}</style>
+    <div style={{ backgroundColor: '#0c0d10', minHeight: '100vh', color: 'white', fontFamily: 'sans-serif', paddingBottom: '20px' }}>
+      
+      <style>{`
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } } 
+        .loader { border: 4px solid #1e222d; border-top: 4px solid #26a69a; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 15px; }
+        /* 16. Animación del Ticker Tape */
+        .ticker-tape { display: flex; overflow: hidden; background: #1E222D; padding: 10px 0; border-bottom: 1px solid #2B2B43; white-space: nowrap; font-size: 13px; font-weight: bold; margin-bottom: 20px;}
+        .ticker-tape-content { animation: scroll 20s linear infinite; display: flex; gap: 50px; padding-left: 100%; }
+        @keyframes scroll { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
+        /* 5. Animación del Esqueleto */
+        @keyframes pulse { 0% {opacity: 0.5;} 50% {opacity: 1;} 100% {opacity: 0.5;} }
+        .skeleton { animation: pulse 1.5s infinite; background: #1E222D; border-radius: 8px; width: 100%; height: 100%; min-height: 200px; border: 1px solid #2B2B43;}
+      `}</style>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '20px', maxWidth: '1400px', margin: '0 auto', alignItems: 'stretch' }}>
+      {/* 16. CINTA DE COTIZACIONES SUPERIOR */}
+      {marketData.length > 0 && (
+        <div className="ticker-tape">
+          <div className="ticker-tape-content">
+            {marketData.map((m, i) => (
+              <span key={i} style={{ color: m.cambio_pct >= 0 ? '#26a69a' : '#ef5350' }}>
+                {m.nombre}: ${m.precio.toFixed(2)} ({m.cambio_pct > 0 ? '+' : ''}{m.cambio_pct.toFixed(2)}%)
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '20px', maxWidth: '1400px', margin: '0 auto', alignItems: 'stretch', padding: '0 20px' }}>
+        
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
-            <h2 style={{ margin: 0 }}>{ticker} <span style={{ color: '#787B86', fontSize: '14px' }}>Terminal</span></h2>
-            <form onSubmit={manejarBusqueda}>
-              <input value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="Ticker..." style={{ padding: '10px', borderRadius: '6px', border: '1px solid #2B2B43', backgroundColor: '#1E222D', color: 'white' }} />
-            </form>
+          
+          {/* CABECERA (Favoritos, Perfil de Empresa y Buscador) */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '15px' }}>
+            <div>
+              {/* 1. FAVORITOS */}
+              <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', fontSize: '28px' }}>
+                {ticker} 
+                <span style={{ cursor: 'pointer', color: favorites.includes(ticker) ? '#FFD700' : '#787B86', fontSize: '22px' }} onClick={toggleFavorite}>
+                  {favorites.includes(ticker) ? '★' : '☆'}
+                </span>
+              </h2>
+              {/* 13 y 4. INFO EMPRESA Y CAMBIO DIARIO */}
+              {tickerInfo && (
+                <div style={{ marginTop: '5px', fontSize: '13px' }}>
+                  <span style={{ fontWeight: 'bold', fontSize: '18px', marginRight: '10px' }}>${tickerInfo.precio.toFixed(2)}</span>
+                  <span style={{ color: tickerInfo.cambio_pct >= 0 ? '#26a69a' : '#ef5350', fontWeight: 'bold', marginRight: '15px' }}>
+                    {tickerInfo.cambio_pct >= 0 ? '▲' : '▼'} {tickerInfo.cambio_pct.toFixed(2)}%
+                  </span>
+                  <span style={{ color: '#787B86' }}>{tickerInfo.sector} • {tickerInfo.industria}</span>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px' }}>
+              <form onSubmit={manejarBusqueda}>
+                <input value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="Buscar Ticker..." style={{ padding: '10px', borderRadius: '6px', border: '1px solid #2B2B43', backgroundColor: '#1E222D', color: 'white', width: '200px' }} />
+              </form>
+              {/* ACCESOS RÁPIDOS FAVORITOS */}
+              <div style={{ display: 'flex', gap: '5px' }}>
+                {favorites.map(f => (
+                  <span key={f} onClick={() => setTicker(f)} style={{ cursor: 'pointer', padding: '3px 8px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '4px', fontSize: '11px', color: '#d1d4dc', border: '1px solid #2B2B43' }}>{f}</span>
+                ))}
+              </div>
+            </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '15px' }}>
-            {['1M', '6M', '1Y', 'MAX'].map(t => (
-              <button key={t} onClick={() => setTimeframe(t)} style={{ padding: '6px 12px', backgroundColor: timeframe === t ? '#26a69a' : '#1E222D', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t}</button>
-            ))}
+          {/* BOTONERAS: TIEMPO Y FILTROS IA (#15) */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', backgroundColor: '#1E222D', padding: '10px', borderRadius: '8px', border: '1px solid #2B2B43' }}>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              {['1M', '6M', '1Y', 'MAX'].map(t => (
+                <button key={t} onClick={() => setTimeframe(t)} style={{ padding: '6px 12px', backgroundColor: timeframe === t ? '#26a69a' : 'transparent', color: timeframe === t ? 'white' : '#d1d4dc', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t}</button>
+              ))}
+            </div>
+            
+            <div style={{ display: 'flex', gap: '5px', fontSize: '12px' }}>
+              <span style={{ color: '#787B86', alignSelf: 'center', marginRight: '5px', fontWeight: 'bold' }}>FILTRO IA:</span>
+              {['ALL', 'ALCISTA', 'BAJISTA', 'NEUTRAL'].map(f => (
+                <button key={f} onClick={() => setNewsFilter(f)} style={{ padding: '4px 10px', backgroundColor: newsFilter === f ? '#2962FF' : 'rgba(255,255,255,0.05)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{f}</button>
+              ))}
+            </div>
           </div>
 
           <div style={{ position: 'relative', border: '1px solid #2B2B43', borderRadius: '8px', overflow: 'hidden', flexGrow: 1, minHeight: '600px', backgroundColor: '#131722' }}>
+            
+            {/* 12. CROSSHAIR OHLC (DATOS EN VIVO) */}
+            {crosshairData && (
+              <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 5, display: 'flex', gap: '15px', fontSize: '12px', color: '#787B86', backgroundColor: 'rgba(19, 23, 34, 0.7)', padding: '5px 10px', borderRadius: '4px' }}>
+                <span>O <b style={{color: 'white'}}>{crosshairData.open.toFixed(2)}</b></span>
+                <span>H <b style={{color: 'white'}}>{crosshairData.high.toFixed(2)}</b></span>
+                <span>L <b style={{color: 'white'}}>{crosshairData.low.toFixed(2)}</b></span>
+                <span>C <b style={{color: 'white'}}>{crosshairData.close.toFixed(2)}</b></span>
+              </div>
+            )}
+
             <div ref={chartContainerRef} style={{ height: '100%', width: '100%' }} />
             
             {isLoading && (
@@ -242,20 +323,15 @@ function App() {
               </div>
             )}
 
-            {/* RENDERIZA AMBOS POPUPS SI EXISTEN SIMULTÁNEAMENTE */}
-            {selectedItem?.noticia && !isLoading && !chartError && (
-              <PopupNoticia data={selectedItem.noticia} onClose={() => setSelectedItem(prev => ({ ...prev, noticia: null }))} />
-            )}
-            
-            {selectedItem?.evento && !isLoading && !chartError && (
-              <PopupEventoMacro data={selectedItem.evento} onClose={() => setSelectedItem(prev => ({ ...prev, evento: null }))} />
-            )}
+            {selectedItem?.noticia && !isLoading && !chartError && <PopupNoticia data={selectedItem.noticia} onClose={() => setSelectedItem(prev => ({ ...prev, noticia: null }))} />}
+            {selectedItem?.evento && !isLoading && !chartError && <PopupEventoMacro data={selectedItem.evento} onClose={() => setSelectedItem(prev => ({ ...prev, evento: null }))} />}
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px', overflow: 'hidden' }}><EconomicCalendar /></div>
-          <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px', overflow: 'hidden' }}><FearAndGreed /></div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', paddingTop: '65px' }}>
+          {/* 5. ESQUELETOS DE CARGA */}
+          {isLoading ? <div className="skeleton" style={{ flex: 1 }}></div> : <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px', overflow: 'hidden' }}><EconomicCalendar /></div>}
+          {isLoading ? <div className="skeleton" style={{ flex: 1 }}></div> : <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px', overflow: 'hidden' }}><FearAndGreed /></div>}
         </div>
       </div>
     </div>
