@@ -10,7 +10,6 @@ function App() {
   const dataRef = useRef({ candle: [], news: [], events: [] });
   const seriesRef = useRef({ candle: null, volume: null });
   
-  // 19. URL Dinámica
   const [ticker, setTicker] = useState(() => new URLSearchParams(window.location.search).get('ticker') || 'AAPL');
   const [timeframe, setTimeframe] = useState('1Y');
   
@@ -19,24 +18,21 @@ function App() {
   const [chartError, setChartError] = useState(null);
   const [searchInput, setSearchInput] = useState('');
 
-  // Estados de las nuevas funcionalidades
-  const [marketData, setMarketData] = useState([]); // 16. Cinta de Cotizaciones
-  const [tickerInfo, setTickerInfo] = useState(null); // 13 y 4. Perfil y Cambio
-  const [favorites, setFavorites] = useState(() => JSON.parse(localStorage.getItem('terminal_favs')) || ['AAPL', 'MSFT', 'TSLA', 'NVDA']); // 1. Favoritos
-  const [newsFilter, setNewsFilter] = useState('ALL'); // 15. Filtro IA
-  const [crosshairData, setCrosshairData] = useState(null); // 12. OHLC
+  const [marketData, setMarketData] = useState([]);
+  const [tickerInfo, setTickerInfo] = useState(null);
+  const [favorites, setFavorites] = useState(() => JSON.parse(localStorage.getItem('terminal_favs')) || ['AAPL', 'MSFT', 'TSLA', 'NVDA']);
+  const [newsFilter, setNewsFilter] = useState('ALL');
+  const [crosshairData, setCrosshairData] = useState(null);
 
   // ⚠️ PON TU URL DE RENDER AQUÍ
   const RENDER_URL = "https://mi-terminal-backend.onrender.com"; 
 
-  // --- LÓGICA DE INICIALIZACIÓN ---
+  // --- CINTA DE COTIZACIONES ---
   useEffect(() => {
-    // 16. Cargar la cinta de cotizaciones
     fetch(`${RENDER_URL}/api/mercado`).then(r => r.json()).then(d => setMarketData(d)).catch(() => {});
   }, []);
 
   useEffect(() => {
-    // 19. Actualizar URL dinámica al cambiar el Ticker
     window.history.replaceState(null, '', `?ticker=${ticker}`);
   }, [ticker]);
 
@@ -48,16 +44,25 @@ function App() {
     localStorage.setItem('terminal_favs', JSON.stringify(favs));
   };
 
-  const manejarBusqueda = (e) => {
+  // --- BUSCADOR INTELIGENTE ---
+  const manejarBusqueda = async (e) => {
     e.preventDefault();
-    if (searchInput.trim()) {
-        setTicker(searchInput.toUpperCase().trim());
+    const query = searchInput.trim();
+    if (query) {
+        setIsLoading(true);
+        try {
+            // Buscamos el ticker real en el backend antes de cargar el gráfico
+            const res = await fetch(`${RENDER_URL}/api/buscar/${query}`);
+            const data = await res.json();
+            setTicker(data.ticker); // Aquí se pondrá "SAN.MC" si buscas "Santander"
+        } catch {
+            setTicker(query.toUpperCase());
+        }
         setSearchInput('');
         setSelectedItem({ noticia: null, evento: null });
     }
   };
 
-  // --- MOTOR DE MARCADORES (Filtros, Eventos y Max/Min) ---
   const aplicarMarcadores = (filtro) => {
     const { candle, news, events } = dataRef.current;
     if (!seriesRef.current.candle || !seriesRef.current.volume || !candle.length) return;
@@ -68,7 +73,6 @@ function App() {
 
     const encontrarVela = (f) => candle.reduce((p, c) => (Math.abs(new Date(c.time) - new Date(f)) < Math.abs(new Date(p.time) - new Date(f)) ? c : p));
 
-    // A) EVENTOS MACRO -> VOLUMEN (ABAJO)
     if (Array.isArray(events)) {
         events.forEach(e => {
             const v = encontrarVela(e.fecha);
@@ -80,14 +84,12 @@ function App() {
         });
     }
 
-    // B) NOTICIAS IA -> VELAS (ARRIBA) CON FILTRO #15
     if (Array.isArray(news)) {
         const noticiasPorFecha = {};
         news.forEach(n => {
             if (filtro === 'ALCISTA' && n.impacto !== 'Alcista') return;
             if (filtro === 'BAJISTA' && n.impacto !== 'Bajista') return;
             if (filtro === 'NEUTRAL' && n.impacto !== 'Neutral') return;
-
             const fCorta = n.fecha.split(' ')[0];
             if (!noticiasPorFecha[fCorta]) noticiasPorFecha[fCorta] = [];
             noticiasPorFecha[fCorta].push(n);
@@ -106,7 +108,6 @@ function App() {
         });
     }
 
-    // C) 11. ETIQUETAS MÁXIMO Y MÍNIMO DEL PERIODO
     let max = -Infinity, min = Infinity, maxTime, minTime;
     candle.forEach(d => {
         if (d.high > max) { max = d.high; maxTime = d.time; }
@@ -118,15 +119,12 @@ function App() {
     interactiveMapRef.current = localMap;
     candleMarkers.sort((a, b) => new Date(a.time) - new Date(b.time));
     volumeMarkers.sort((a, b) => new Date(a.time) - new Date(b.time));
-    
     createSeriesMarkers(seriesRef.current.candle, candleMarkers);
     createSeriesMarkers(seriesRef.current.volume, volumeMarkers);
   };
 
-  // Escuchador del Filtro de Noticias
   useEffect(() => { aplicarMarcadores(newsFilter); }, [newsFilter]);
 
-  // --- LÓGICA PRINCIPAL DEL GRÁFICO ---
   useEffect(() => {
     if (!chartContainerRef.current) return;
     let isMounted = true;
@@ -140,15 +138,11 @@ function App() {
       width: chartContainerRef.current.clientWidth,
       height: 600,
       crosshair: { mode: 0 },
-      // 9. MARCA DE AGUA DEL TICKER
       watermark: { visible: true, fontSize: 120, horzAlign: 'center', vertAlign: 'center', color: 'rgba(255, 255, 255, 0.03)', text: ticker },
     });
     chartInstance.current = chart;
 
-    const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350',
-    });
-    // 10. Línea de precio actual
+    const candleSeries = chart.addSeries(CandlestickSeries, { upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350' });
     candleSeries.applyOptions({ lastValueVisible: true, priceLineVisible: true });
 
     const volumeSeries = chart.addSeries(HistogramSeries, { color: '#26a69a', priceFormat: { type: 'volume' }, priceScaleId: '' });
@@ -170,13 +164,13 @@ function App() {
         const [resN, resE, resInfo] = await Promise.all([
           fetch(`${RENDER_URL}/api/analisis/${ticker}`).then(r => r.json()),
           fetch(`${RENDER_URL}/api/eventos_macro`).then(r => r.json()),
-          fetch(`${RENDER_URL}/api/info/${ticker}`).then(r => r.json()) // 13. Perfil de empresa
+          fetch(`${RENDER_URL}/api/info/${ticker}`).then(r => r.json())
         ]);
 
         if (isMounted) {
             dataRef.current = { candle: candleData, news: resN, events: resE };
             setTickerInfo(resInfo);
-            aplicarMarcadores(newsFilter); // Dispara el motor con el filtro actual
+            aplicarMarcadores(newsFilter);
         }
         chart.timeScale().fitContent();
       } catch (e) { 
@@ -194,19 +188,14 @@ function App() {
         else setSelectedItem({ noticia: null, evento: null });
     });
 
-    // 12. SINCRONIZACIÓN CROSSHAIR (OHLC)
     chart.subscribeCrosshairMove((param) => {
-        if (param.time && param.seriesData.get(seriesRef.current.candle)) {
-            setCrosshairData(param.seriesData.get(seriesRef.current.candle));
-        } else {
-            setCrosshairData(null);
-        }
+        if (param.time && param.seriesData.get(seriesRef.current.candle)) setCrosshairData(param.seriesData.get(seriesRef.current.candle));
+        else setCrosshairData(null);
     });
 
     return () => { isMounted = false; chart.remove(); };
-  }, [ticker, timeframe]); // Nota: newsFilter NO está aquí, para no recargar la gráfica al filtrar.
+  }, [ticker, timeframe]);
 
-  // Componentes de Tarjetas
   const PopupNoticia = ({ data, onClose }) => (
     <div style={{ position: 'absolute', top: '40px', left: '20px', width: '300px', backgroundColor: '#1E222D', borderLeft: `4px solid ${data.color}`, padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}><div style={{ fontSize: '11px', color: '#787B86', display: 'flex', justifyContent: 'space-between' }}><span>📰 {data.fuente}</span><span style={{ cursor: 'pointer', padding: '0 5px' }} onClick={onClose}>✕</span></div><p style={{ fontWeight: 'bold', fontSize: '14px', margin: '10px 0', lineHeight: '1.4' }}>{data.titulo}</p><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px', borderTop: '1px solid #2B2B43', paddingTop: '10px' }}><span style={{ fontSize: '12px', fontWeight: 'bold', color: data.color, backgroundColor: 'rgba(255,255,255,0.05)', padding: '4px 8px', borderRadius: '4px' }}>Impacto: {data.impacto}</span><a href={data.url} target="_blank" rel="noreferrer" style={{ color: '#d1d4dc', textDecoration: 'none', fontSize: '12px', fontWeight: 'bold' }}>Leer ↗</a></div></div>
   );
@@ -220,21 +209,20 @@ function App() {
       <style>{`
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } } 
         .loader { border: 4px solid #1e222d; border-top: 4px solid #26a69a; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 15px; }
-        /* 16. Animación del Ticker Tape */
-        .ticker-tape { display: flex; overflow: hidden; background: #1E222D; padding: 10px 0; border-bottom: 1px solid #2B2B43; white-space: nowrap; font-size: 13px; font-weight: bold; margin-bottom: 20px;}
-        .ticker-tape-content { animation: scroll 20s linear infinite; display: flex; gap: 50px; padding-left: 100%; }
+        .ticker-tape { overflow: hidden; background: #1E222D; padding: 10px 0; border-bottom: 1px solid #2B2B43; font-size: 13px; font-weight: bold; margin-bottom: 20px;}
+        .ticker-tape-content { display: inline-block; white-space: nowrap; animation: scroll 25s linear infinite; padding-left: 100%; }
+        .ticker-item { display: inline-block; margin-right: 50px; }
         @keyframes scroll { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
-        /* 5. Animación del Esqueleto */
         @keyframes pulse { 0% {opacity: 0.5;} 50% {opacity: 1;} 100% {opacity: 0.5;} }
         .skeleton { animation: pulse 1.5s infinite; background: #1E222D; border-radius: 8px; width: 100%; height: 100%; min-height: 200px; border: 1px solid #2B2B43;}
       `}</style>
 
-      {/* 16. CINTA DE COTIZACIONES SUPERIOR */}
+      {/* CINTA DE COTIZACIONES SUPERIOR */}
       {marketData.length > 0 && (
         <div className="ticker-tape">
           <div className="ticker-tape-content">
             {marketData.map((m, i) => (
-              <span key={i} style={{ color: m.cambio_pct >= 0 ? '#26a69a' : '#ef5350' }}>
+              <span key={i} className="ticker-item" style={{ color: m.cambio_pct >= 0 ? '#26a69a' : '#ef5350' }}>
                 {m.nombre}: ${m.precio.toFixed(2)} ({m.cambio_pct > 0 ? '+' : ''}{m.cambio_pct.toFixed(2)}%)
               </span>
             ))}
@@ -243,20 +231,16 @@ function App() {
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '20px', maxWidth: '1400px', margin: '0 auto', alignItems: 'stretch', padding: '0 20px' }}>
-        
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           
-          {/* CABECERA (Favoritos, Perfil de Empresa y Buscador) */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '15px' }}>
             <div>
-              {/* 1. FAVORITOS */}
               <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', fontSize: '28px' }}>
                 {ticker} 
                 <span style={{ cursor: 'pointer', color: favorites.includes(ticker) ? '#FFD700' : '#787B86', fontSize: '22px' }} onClick={toggleFavorite}>
                   {favorites.includes(ticker) ? '★' : '☆'}
                 </span>
               </h2>
-              {/* 13 y 4. INFO EMPRESA Y CAMBIO DIARIO */}
               {tickerInfo && (
                 <div style={{ marginTop: '5px', fontSize: '13px' }}>
                   <span style={{ fontWeight: 'bold', fontSize: '18px', marginRight: '10px' }}>${tickerInfo.precio.toFixed(2)}</span>
@@ -270,9 +254,8 @@ function App() {
 
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px' }}>
               <form onSubmit={manejarBusqueda}>
-                <input value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="Buscar Ticker..." style={{ padding: '10px', borderRadius: '6px', border: '1px solid #2B2B43', backgroundColor: '#1E222D', color: 'white', width: '200px' }} />
+                <input value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="Ej: Santander, Inditex..." style={{ padding: '10px', borderRadius: '6px', border: '1px solid #2B2B43', backgroundColor: '#1E222D', color: 'white', width: '200px' }} />
               </form>
-              {/* ACCESOS RÁPIDOS FAVORITOS */}
               <div style={{ display: 'flex', gap: '5px' }}>
                 {favorites.map(f => (
                   <span key={f} onClick={() => setTicker(f)} style={{ cursor: 'pointer', padding: '3px 8px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '4px', fontSize: '11px', color: '#d1d4dc', border: '1px solid #2B2B43' }}>{f}</span>
@@ -281,7 +264,6 @@ function App() {
             </div>
           </div>
 
-          {/* BOTONERAS: TIEMPO Y FILTROS IA (#15) */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', backgroundColor: '#1E222D', padding: '10px', borderRadius: '8px', border: '1px solid #2B2B43' }}>
             <div style={{ display: 'flex', gap: '8px' }}>
               {['1M', '6M', '1Y', 'MAX'].map(t => (
@@ -299,7 +281,6 @@ function App() {
 
           <div style={{ position: 'relative', border: '1px solid #2B2B43', borderRadius: '8px', overflow: 'hidden', flexGrow: 1, minHeight: '600px', backgroundColor: '#131722' }}>
             
-            {/* 12. CROSSHAIR OHLC (DATOS EN VIVO) */}
             {crosshairData && (
               <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 5, display: 'flex', gap: '15px', fontSize: '12px', color: '#787B86', backgroundColor: 'rgba(19, 23, 34, 0.7)', padding: '5px 10px', borderRadius: '4px' }}>
                 <span>O <b style={{color: 'white'}}>{crosshairData.open.toFixed(2)}</b></span>
@@ -328,8 +309,7 @@ function App() {
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', paddingTop: '65px' }}>
-          {/* 5. ESQUELETOS DE CARGA */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           {isLoading ? <div className="skeleton" style={{ flex: 1 }}></div> : <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px', overflow: 'hidden' }}><EconomicCalendar /></div>}
           {isLoading ? <div className="skeleton" style={{ flex: 1 }}></div> : <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px', overflow: 'hidden' }}><FearAndGreed /></div>}
         </div>
