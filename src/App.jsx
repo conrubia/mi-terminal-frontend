@@ -61,30 +61,34 @@ function App() {
         if (!isMounted || !Array.isArray(candleData) || candleData.length === 0) { if (isMounted) setChartError("Sin datos."); return; }
         candleSeries.setData(candleData);
 
-        // 2. Descargar Noticias (IA) y Eventos Macro en paralelo
-        const [resN, resE] = await Promise.all([
-          fetch(`${RENDER_URL}/api/analisis/${ticker}`),
-          fetch(`${RENDER_URL}/api/eventos_macro`)
-        ]);
-        
-        const newsData = await resN.json();
-        const eventsData = await resE.json();
+        // 2. Descargar Noticias (IA) y Eventos Macro
+        const [resN, resE] = await fetch(`${RENDER_URL}/api/analisis/${ticker}`).then(r => r.json()),
+              eventsData = await fetch(`${RENDER_URL}/api/eventos_macro`).then(r => r.json());
 
         if (isMounted) {
             const markers = [];
             const localInteractiveMap = {};
 
-            // --- A) Procesar Eventos Macro (3 Toros) ---
+            // FUNCIÓN DE AYUDA: Encuentra la vela más cercana a una fecha
+            const encontrarVelaCercana = (fechaObjetivo) => {
+                return candleData.reduce((prev, curr) => {
+                    return (Math.abs(new Date(curr.time) - new Date(fechaObjetivo)) < Math.abs(new Date(prev.time) - new Date(fechaObjetivo)) ? curr : prev);
+                });
+            };
+
+            // --- A) Procesar Eventos Macro (3 Toros) con Lógica de Aproximación ---
             if (Array.isArray(eventsData)) {
                 eventsData.forEach(evento => {
-                    const existeVela = candleData.find(d => d.time === evento.fecha);
-                    if (existeVela) {
-                        localInteractiveMap[evento.fecha] = evento; // Guardar en el mapa para el clic
+                    // BUSCAMOS LA VELA MÁS CERCANA (Incluso si el evento fue en fin de semana)
+                    const velaMatch = encontrarVelaCercana(evento.fecha);
+                    
+                    if (velaMatch) {
+                        localInteractiveMap[velaMatch.time] = { ...evento, fechaReal: evento.fecha };
                         markers.push({ 
-                            time: evento.fecha, 
-                            position: 'belowBar', // Los eventos los ponemos debajo de la vela
+                            time: velaMatch.time, 
+                            position: 'belowBar', 
                             color: evento.color, 
-                            shape: 'square', // Cuadrado en lugar de círculo
+                            shape: 'square', 
                             text: 'E',
                             size: 2
                         });
@@ -93,27 +97,18 @@ function App() {
             }
 
             // --- B) Procesar Noticias (IA) ---
-            if (Array.isArray(newsData)) {
-                const noticiasPorFecha = {};
-                newsData.forEach(news => {
-                    const fechaCorta = news.fecha.split(' ')[0];
-                    if (!noticiasPorFecha[fechaCorta]) noticiasPorFecha[fechaCorta] = [];
-                    noticiasPorFecha[fechaCorta].push(news);
-                });
-
-                Object.keys(noticiasPorFecha).forEach(fecha => {
-                    const existeVela = candleData.find(d => d.time === fecha);
-                    // Comprobamos que no haya ya un Evento en ese día para no pisarlos
-                    if (existeVela && !localInteractiveMap[fecha]) {
-                        const noticiaPrincipal = noticiasPorFecha[fecha][0];
-                        localInteractiveMap[fecha] = noticiaPrincipal;
+            if (Array.isArray(resN)) {
+                resN.forEach(news => {
+                    const velaMatch = encontrarVelaCercana(news.fecha);
+                    // Solo ponemos noticia si ese día no tiene ya un evento macro (prioridad al evento)
+                    if (velaMatch && !localInteractiveMap[velaMatch.time]) {
+                        localInteractiveMap[velaMatch.time] = news;
                         markers.push({ 
-                            time: fecha, 
-                            position: 'aboveBar', // Noticias arriba de la vela
-                            color: noticiaPrincipal.color, 
+                            time: velaMatch.time, 
+                            position: 'aboveBar', 
+                            color: news.color, 
                             shape: 'circle', 
-                            text: 'N',
-                            size: 1
+                            text: 'N'
                         });
                     }
                 });
@@ -124,7 +119,7 @@ function App() {
         }
         chart.timeScale().fitContent();
       } catch (e) { 
-        if (isMounted) setChartError("Fallo de conexión con el servidor.");
+        if (isMounted) setChartError("Error de sincronización.");
       } finally { 
         if (isMounted) setIsLoading(false); 
       }
