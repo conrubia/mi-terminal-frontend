@@ -72,16 +72,36 @@ function App() {
             const markers = [];
             const localNewsMap = {};
 
+            // 1. Agrupar noticias por fecha exacta (Y-M-D)
+            const noticiasPorFecha = {};
             newsData.forEach(news => {
-                const match = candleData.reduce((prev, curr) => {
-                    return (Math.abs(new Date(curr.time) - new Date(news.fecha)) < Math.abs(new Date(prev.time) - new Date(news.fecha)) ? curr : prev);
-                });
+                const fechaCorta = news.fecha.split(' ')[0]; // Asegurar que solo sea YYYY-MM-DD
+                if (!noticiasPorFecha[fechaCorta]) {
+                    noticiasPorFecha[fechaCorta] = [];
+                }
+                noticiasPorFecha[fechaCorta].push(news);
+            });
 
-                if (match) {
-                    localNewsMap[match.time] = news;
-                    markers.push({ time: match.time, position: 'aboveBar', color: '#2962FF', shape: 'circle', text: 'N' });
+            // 2. Crear un solo marcador por fecha en el gráfico
+            Object.keys(noticiasPorFecha).forEach(fecha => {
+                // Comprobamos si hay una vela exactamente en esa fecha
+                const existeVela = candleData.find(d => d.time === fecha);
+                
+                if (existeVela) {
+                    // Tomamos la noticia más reciente de ese día
+                    const noticiaPrincipal = noticiasPorFecha[fecha][0];
+                    
+                    localNewsMap[fecha] = noticiaPrincipal;
+                    markers.push({ 
+                        time: fecha, 
+                        position: 'aboveBar', 
+                        color: '#2962FF', 
+                        shape: 'circle', 
+                        text: 'N' 
+                    });
                 }
             });
+
             newsMapRef.current = localNewsMap;
             createSeriesMarkers(candleSeries, markers);
         }
