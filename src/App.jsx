@@ -38,40 +38,46 @@ function App() {
       grid: { vertLines: { color: '#2B2B43' }, horzLines: { color: '#2B2B43' } },
       width: chartContainerRef.current.clientWidth,
       height: 600,
-      timeScale: { borderVisible: false }
+      // Añadimos margen inferior para que las "E" tengan su propio espacio despejado
+      rightPriceScale: {
+        scaleMargins: {
+          top: 0.1,
+          bottom: 0.2, 
+        },
+      },
     });
     chartInstance.current = chart;
 
-    // 1. Serie de Velas
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350',
     });
 
-    // 2. Serie de Volumen (Histograma en la parte inferior)
+    // SERIE DE VOLUMEN
     const volumeSeries = chart.addSeries(HistogramSeries, {
       color: '#26a69a',
       priceFormat: { type: 'volume' },
-      priceScaleId: '', // Esto lo convierte en un overlay
+      priceScaleId: '', // Esto lo pone como overlay (encima del precio)
     });
 
-    // Forzamos el volumen al 20% inferior
     volumeSeries.priceScale().applyOptions({
-      scaleMargins: { top: 0.8, bottom: 0 },
+      scaleMargins: {
+        top: 0.8, // El volumen solo ocupa el 20% inferior
+        bottom: 0,
+      },
     });
 
     const fetchData = async () => {
       try {
         const resP = await fetch(`${RENDER_URL}/api/precios/${ticker}?timeframe=${timeframe.toLowerCase()}`);
         const candleData = await resP.json();
-        
         if (candleData.error) { if (isMounted) setChartError(candleData.error); return; }
         
         candleSeries.setData(candleData);
-        
-        // Mapeamos el volumen con colores (verde si sube, rojo si baja)
+
+        // Datos de Volumen
         const volumeData = candleData.map(d => ({
           time: d.time,
-          value: d.value || 0,
+          value: d.value,
           color: d.close >= d.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
         }));
         volumeSeries.setData(volumeData);
@@ -86,47 +92,48 @@ function App() {
             const localMap = {};
             const encontrarVela = (f) => candleData.reduce((p, c) => (Math.abs(new Date(c.time) - new Date(f)) < Math.abs(new Date(p.time) - new Date(f)) ? c : p));
 
-            // --- A) EVENTOS MACRO (ABBAJO DEL TODO) ---
+            // EVENTOS MACRO -> ABAJO DEL TODO
             if (Array.isArray(resE)) {
-              resE.forEach(e => {
+                resE.forEach(e => {
                     const v = encontrarVela(e.fecha);
                     if (!localMap[v.time]) localMap[v.time] = { noticia: null, evento: null };
                     localMap[v.time].evento = e;
                     markers.push({ 
-                      time: v.time, 
-                      position: 'atTheBottom', // <--- POSICIÓN CORREGIDA
-                      color: e.color || '#FF9800', 
-                      shape: 'square', 
-                      text: 'E',
-                      size: 2
+                        time: v.time, 
+                        position: 'atTheBottom', // Fuerza la posición al eje X
+                        color: e.color, 
+                        shape: 'square', 
+                        text: 'E',
+                        size: 1.5
                     });
                 });
             }
 
-            // --- B) NOTICIAS IA (ARRIBA) ---
+            // NOTICIAS -> ARRIBA
             if (Array.isArray(resN)) {
                 resN.forEach(n => {
                     const v = encontrarVela(n.fecha);
                     if (!localMap[v.time]) localMap[v.time] = { noticia: null, evento: null };
                     localMap[v.time].noticia = n;
                     markers.push({ 
-                      time: v.time, 
-                      position: 'aboveBar', 
-                      color: n.color, 
-                      shape: 'circle', 
-                      text: 'N',
-                      size: 1
+                        time: v.time, 
+                        position: 'aboveBar', 
+                        color: n.color, 
+                        shape: 'circle', 
+                        text: 'N',
+                        size: 1
                     });
                 });
             }
 
             interactiveMapRef.current = localMap;
             markers.sort((a, b) => new Date(a.time) - new Date(b.time));
-            createSeriesMarkers(candleSeries, markers);
+            // Aplicamos los marcadores a la serie de velas
+            candleSeries.setMarkers(markers);
         }
         chart.timeScale().fitContent();
       } catch (e) { 
-        if (isMounted) setChartError("Error de sincronización.");
+        if (isMounted) setChartError("Fallo al conectar.");
       } finally { 
         if (isMounted) setIsLoading(false); 
       }
@@ -135,11 +142,7 @@ function App() {
     fetchData();
     chart.subscribeClick((p) => {
         const d = p.time ? (typeof p.time === 'string' ? p.time : `${p.time.year}-${String(p.time.month).padStart(2, '0')}-${String(p.time.day).padStart(2, '0')}`) : null;
-        if (d && interactiveMapRef.current[d]) {
-          setSelectedItem(interactiveMapRef.current[d]);
-        } else {
-          setSelectedItem({ noticia: null, evento: null });
-        }
+        setSelectedItem(interactiveMapRef.current[d] || { noticia: null, evento: null });
     });
     return () => { isMounted = false; chart.remove(); };
   }, [ticker, timeframe]);
