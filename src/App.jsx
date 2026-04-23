@@ -6,11 +6,15 @@ import FearAndGreed from "./FearAndGreed";
 function App() {
   const chartContainerRef = useRef(null);
   const chartInstance = useRef(null); 
-  const newsMapRef = useRef({}); 
+  // Ahora el mapa guardará noticias y eventos
+  const interactiveMapRef = useRef({}); 
   
   const [ticker, setTicker] = useState('AAPL');
   const [timeframe, setTimeframe] = useState('1Y');
-  const [selectedNews, setSelectedNews] = useState(null);
+  
+  // Estado para el popup que se abre al hacer clic (puede ser una noticia o un evento)
+  const [selectedItem, setSelectedItem] = useState(null); 
+  
   const [isLoading, setIsLoading] = useState(true);
   const [chartError, setChartError] = useState(null);
   const [searchInput, setSearchInput] = useState('');
@@ -23,7 +27,7 @@ function App() {
     if (searchInput.trim()) {
         setTicker(searchInput.toUpperCase().trim());
         setSearchInput('');
-        setSelectedNews(null);
+        setSelectedItem(null);
     }
   };
 
@@ -49,49 +53,73 @@ function App() {
 
     const fetchData = async () => {
       try {
+        // 1. Descargar Precios
         const resP = await fetch(`${RENDER_URL}/api/precios/${ticker}?timeframe=${timeframe.toLowerCase()}`);
         const candleData = await resP.json();
         
-        if (candleData.error) {
-            if (isMounted) setChartError(candleData.error); return;
-        }
-
-        if (!isMounted || !Array.isArray(candleData) || candleData.length === 0) {
-            if (isMounted) setChartError("No se recibieron datos válidos."); return;
-        }
-
+        if (candleData.error) { if (isMounted) setChartError(candleData.error); return; }
+        if (!isMounted || !Array.isArray(candleData) || candleData.length === 0) { if (isMounted) setChartError("Sin datos."); return; }
         candleSeries.setData(candleData);
 
-        const resN = await fetch(`${RENDER_URL}/api/analisis/${ticker}`);
+        // 2. Descargar Noticias (IA) y Eventos Macro en paralelo
+        const [resN, resE] = await Promise.all([
+          fetch(`${RENDER_URL}/api/analisis/${ticker}`),
+          fetch(`${RENDER_URL}/api/eventos_macro`)
+        ]);
+        
         const newsData = await resN.json();
+        const eventsData = await resE.json();
 
-        if (Array.isArray(newsData) && isMounted) {
+        if (isMounted) {
             const markers = [];
-            const localNewsMap = {};
-            const noticiasPorFecha = {};
+            const localInteractiveMap = {};
 
-            newsData.forEach(news => {
-                const fechaCorta = news.fecha.split(' ')[0];
-                if (!noticiasPorFecha[fechaCorta]) noticiasPorFecha[fechaCorta] = [];
-                noticiasPorFecha[fechaCorta].push(news);
-            });
+            // --- A) Procesar Eventos Macro (3 Toros) ---
+            if (Array.isArray(eventsData)) {
+                eventsData.forEach(evento => {
+                    const existeVela = candleData.find(d => d.time === evento.fecha);
+                    if (existeVela) {
+                        localInteractiveMap[evento.fecha] = evento; // Guardar en el mapa para el clic
+                        markers.push({ 
+                            time: evento.fecha, 
+                            position: 'belowBar', // Los eventos los ponemos debajo de la vela
+                            color: evento.color, 
+                            shape: 'square', // Cuadrado en lugar de círculo
+                            text: 'E',
+                            size: 2
+                        });
+                    }
+                });
+            }
 
-            Object.keys(noticiasPorFecha).forEach(fecha => {
-                const existeVela = candleData.find(d => d.time === fecha);
-                if (existeVela) {
-                    const noticiaPrincipal = noticiasPorFecha[fecha][0];
-                    localNewsMap[fecha] = noticiaPrincipal;
-                    markers.push({ 
-                        time: fecha, 
-                        position: 'aboveBar', 
-                        color: noticiaPrincipal.color, // <-- AHORA USA EL COLOR DE LA IA
-                        shape: 'circle', 
-                        text: 'N' 
-                    });
-                }
-            });
+            // --- B) Procesar Noticias (IA) ---
+            if (Array.isArray(newsData)) {
+                const noticiasPorFecha = {};
+                newsData.forEach(news => {
+                    const fechaCorta = news.fecha.split(' ')[0];
+                    if (!noticiasPorFecha[fechaCorta]) noticiasPorFecha[fechaCorta] = [];
+                    noticiasPorFecha[fechaCorta].push(news);
+                });
 
-            newsMapRef.current = localNewsMap;
+                Object.keys(noticiasPorFecha).forEach(fecha => {
+                    const existeVela = candleData.find(d => d.time === fecha);
+                    // Comprobamos que no haya ya un Evento en ese día para no pisarlos
+                    if (existeVela && !localInteractiveMap[fecha]) {
+                        const noticiaPrincipal = noticiasPorFecha[fecha][0];
+                        localInteractiveMap[fecha] = noticiaPrincipal;
+                        markers.push({ 
+                            time: fecha, 
+                            position: 'aboveBar', // Noticias arriba de la vela
+                            color: noticiaPrincipal.color, 
+                            shape: 'circle', 
+                            text: 'N',
+                            size: 1
+                        });
+                    }
+                });
+            }
+
+            interactiveMapRef.current = localInteractiveMap;
             createSeriesMarkers(candleSeries, markers);
         }
         chart.timeScale().fitContent();
@@ -104,20 +132,58 @@ function App() {
 
     fetchData();
     
+    // El "escuchador" de clics en el gráfico
     chart.subscribeClick((p) => {
         const d = p.time ? (typeof p.time === 'string' ? p.time : `${p.time.year}-${String(p.time.month).padStart(2, '0')}-${String(p.time.day).padStart(2, '0')}`) : null;
-        setSelectedNews(newsMapRef.current[d] || null);
+        setSelectedItem(interactiveMapRef.current[d] || null);
     });
 
     return () => { isMounted = false; chart.remove(); };
   }, [ticker, timeframe]);
 
+  // --- COMPONENTES AUXILIARES PARA LOS POPUPS ---
+  const PopupNoticia = ({ data, onClose }) => (
+    <div style={{ position: 'absolute', top: '20px', left: '20px', width: '300px', backgroundColor: '#1E222D', borderLeft: `4px solid ${data.color}`, padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
+      <div style={{ fontSize: '11px', color: '#787B86', display: 'flex', justifyContent: 'space-between' }}>
+        <span>📰 {data.fuente}</span>
+        <span style={{ cursor: 'pointer', padding: '0 5px' }} onClick={onClose}>✕</span>
+      </div>
+      <p style={{ fontWeight: 'bold', fontSize: '14px', margin: '10px 0', lineHeight: '1.4' }}>{data.titulo}</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px', borderTop: '1px solid #2B2B43', paddingTop: '10px' }}>
+        <span style={{ fontSize: '12px', fontWeight: 'bold', color: data.color, backgroundColor: 'rgba(255,255,255,0.05)', padding: '4px 8px', borderRadius: '4px' }}>Impacto: {data.impacto}</span>
+        <a href={data.url} target="_blank" rel="noreferrer" style={{ color: '#d1d4dc', textDecoration: 'none', fontSize: '12px', fontWeight: 'bold' }}>Leer ↗</a>
+      </div>
+    </div>
+  );
+
+  const PopupEventoMacro = ({ data, onClose }) => (
+    <div style={{ position: 'absolute', bottom: '20px', right: '20px', width: '280px', backgroundColor: '#2a1a1a', border: `1px solid ${data.color}`, borderRadius: '6px', padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
+      <div style={{ fontSize: '11px', color: '#FF9800', display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontWeight: 'bold' }}>
+        <span>⚠️ EVENTO MACROECONÓMICO (3 TOROS)</span>
+        <span style={{ cursor: 'pointer', padding: '0 5px', color: '#d1d4dc' }} onClick={onClose}>✕</span>
+      </div>
+      <p style={{ fontWeight: 'bold', fontSize: '15px', margin: '0 0 15px 0', color: 'white' }}>{data.titulo}</p>
+      
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '5px', textAlign: 'center', backgroundColor: 'rgba(0,0,0,0.3)', padding: '10px', borderRadius: '4px' }}>
+        <div>
+          <div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Actual</div>
+          <div style={{ fontSize: '14px', fontWeight: 'bold', color: 'white' }}>{data.actual}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Prev</div>
+          <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#d1d4dc' }}>{data.prev}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Anterior</div>
+          <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#787B86' }}>{data.ant}</div>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ padding: '20px', backgroundColor: '#0c0d10', minHeight: '100vh', color: 'white', fontFamily: 'sans-serif' }}>
-      <style>{`
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .loader { border: 4px solid #1e222d; border-top: 4px solid #26a69a; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 15px; }
-      `}</style>
+      <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } } .loader { border: 4px solid #1e222d; border-top: 4px solid #26a69a; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 15px; }`}</style>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '20px', maxWidth: '1400px', margin: '0 auto', alignItems: 'stretch' }}>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -146,29 +212,15 @@ function App() {
 
             {chartError && !isLoading && (
               <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(239, 83, 80, 0.1)', zIndex: 10, padding: '20px', textAlign: 'center' }}>
-                <span style={{ fontSize: '40px', marginBottom: '10px' }}>⚠️</span>
-                <h3 style={{ color: '#ef5350', margin: 0 }}>Error al cargar gráfico</h3>
-                <p style={{ color: '#d1d4dc' }}>{chartError}</p>
+                <span style={{ fontSize: '40px', marginBottom: '10px' }}>⚠️</span><h3 style={{ color: '#ef5350', margin: 0 }}>Error</h3><p style={{ color: '#d1d4dc' }}>{chartError}</p>
               </div>
             )}
 
-            {/* POP-UP DE NOTICIAS CON IMPACTO */}
-            {selectedNews && !isLoading && !chartError && (
-               <div style={{ position: 'absolute', top: '20px', left: '20px', width: '300px', backgroundColor: '#1E222D', borderLeft: `4px solid ${selectedNews.color}`, padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
-                  <div style={{ fontSize: '11px', color: '#787B86', display: 'flex', justifyContent: 'space-between' }}>
-                    <span>{selectedNews.fuente}</span>
-                    <span style={{ cursor: 'pointer', padding: '0 5px' }} onClick={() => setSelectedNews(null)}>✕</span>
-                  </div>
-                  <p style={{ fontWeight: 'bold', fontSize: '14px', margin: '10px 0', lineHeight: '1.4' }}>{selectedNews.titulo}</p>
-                  
-                  {/* BARRA INFERIOR DEL POPUP: IMPACTO Y BOTÓN */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px', borderTop: '1px solid #2B2B43', paddingTop: '10px' }}>
-                    <span style={{ fontSize: '12px', fontWeight: 'bold', color: selectedNews.color, backgroundColor: 'rgba(255,255,255,0.05)', padding: '4px 8px', borderRadius: '4px' }}>
-                      Impacto: {selectedNews.impacto}
-                    </span>
-                    <a href={selectedNews.url} target="_blank" rel="noreferrer" style={{ color: '#d1d4dc', textDecoration: 'none', fontSize: '12px', fontWeight: 'bold' }}>Leer ↗</a>
-                  </div>
-                </div>
+            {/* RENDERIZADO DINÁMICO DEL POPUP SEGÚN EL TIPO DE ITEM CLICKADO */}
+            {selectedItem && !isLoading && !chartError && (
+              selectedItem.tipo === "noticia" 
+                ? <PopupNoticia data={selectedItem} onClose={() => setSelectedItem(null)} />
+                : <PopupEventoMacro data={selectedItem} onClose={() => setSelectedItem(null)} />
             )}
           </div>
         </div>
