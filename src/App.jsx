@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createChart, CandlestickSeries, createSeriesMarkers } from 'lightweight-charts';
 import EconomicCalendar from "./EconomicCalendar";
-import FearAndGreed from "./FearAndGreed"; // <-- Aquí es donde App.jsx llama al panel
+import FearAndGreed from "./FearAndGreed";
 
 function App() {
   const chartContainerRef = useRef(null);
@@ -12,15 +12,26 @@ function App() {
   const [timeframe, setTimeframe] = useState('1Y');
   const [selectedNews, setSelectedNews] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [chartError, setChartError] = useState(null); // NUEVO: Chivato de errores
   const [searchInput, setSearchInput] = useState('');
 
   // ⚠️ PON TU URL DE RENDER AQUÍ (Sin barra al final)
   const RENDER_URL = "https://mi-terminal-backend.onrender.com"; 
 
+  const manejarBusqueda = (e) => {
+    e.preventDefault();
+    if (searchInput.trim()) {
+        setTicker(searchInput.toUpperCase().trim());
+        setSearchInput('');
+        setSelectedNews(null);
+    }
+  };
+
   useEffect(() => {
     if (!chartContainerRef.current) return;
     let isMounted = true;
     setIsLoading(true);
+    setChartError(null);
     chartContainerRef.current.innerHTML = '';
 
     const chart = createChart(chartContainerRef.current, {
@@ -40,7 +51,18 @@ function App() {
       try {
         const resP = await fetch(`${RENDER_URL}/api/precios/${ticker}?timeframe=${timeframe.toLowerCase()}`);
         const candleData = await resP.json();
-        if (!isMounted || !Array.isArray(candleData)) return;
+        
+        // CHIVATO DE ERRORES: Si el backend manda error, lo mostramos en pantalla
+        if (candleData.error) {
+            if (isMounted) setChartError(candleData.error);
+            return;
+        }
+
+        if (!isMounted || !Array.isArray(candleData) || candleData.length === 0) {
+            if (isMounted) setChartError("No se recibieron datos válidos.");
+            return;
+        }
+
         candleSeries.setData(candleData);
 
         const resN = await fetch(`${RENDER_URL}/api/analisis/${ticker}`);
@@ -64,10 +86,16 @@ function App() {
             createSeriesMarkers(candleSeries, markers);
         }
         chart.timeScale().fitContent();
-      } catch (e) { console.error(e); } finally { if (isMounted) setIsLoading(false); }
+      } catch (e) { 
+        console.error(e); 
+        if (isMounted) setChartError("Fallo de conexión con el servidor.");
+      } finally { 
+        if (isMounted) setIsLoading(false); 
+      }
     };
 
     fetchData();
+    
     chart.subscribeClick((p) => {
         const d = p.time ? (typeof p.time === 'string' ? p.time : `${p.time.year}-${String(p.time.month).padStart(2, '0')}-${String(p.time.day).padStart(2, '0')}`) : null;
         setSelectedNews(newsMapRef.current[d] || null);
@@ -80,17 +108,15 @@ function App() {
     <div style={{ padding: '20px', backgroundColor: '#0c0d10', minHeight: '100vh', color: 'white', fontFamily: 'sans-serif' }}>
       <style>{`
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .loader { border: 4px solid #1e222d; border-top: 4px solid #26a69a; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        .loader { border: 4px solid #1e222d; border-top: 4px solid #26a69a; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 15px; }
       `}</style>
 
-      {/* ESTA ES LA REJILLA PRINCIPAL QUE RECUPERA EL DISEÑO */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '20px', maxWidth: '1400px', margin: '0 auto', alignItems: 'stretch' }}>
         
-        {/* LADO IZQUIERDO: Gráfico y buscador */}
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
             <h2 style={{ margin: 0 }}>{ticker} <span style={{ color: '#787B86', fontSize: '14px' }}>Terminal</span></h2>
-            <form onSubmit={(e) => { e.preventDefault(); setTicker(searchInput.toUpperCase()); setSearchInput(''); }}>
+            <form onSubmit={manejarBusqueda}>
               <input value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="Ticker (Ej: AAPL)..." style={{ padding: '10px', borderRadius: '6px', border: '1px solid #2B2B43', backgroundColor: '#1E222D', color: 'white' }} />
             </form>
           </div>
@@ -102,33 +128,41 @@ function App() {
           </div>
 
           <div style={{ position: 'relative', border: '1px solid #2B2B43', borderRadius: '8px', overflow: 'hidden', flexGrow: 1, minHeight: '600px', backgroundColor: '#131722' }}>
-            <div ref={chartContainerRef} style={{ height: '100%' }} />
+            {/* EL LIENZO DEL GRÁFICO */}
+            <div ref={chartContainerRef} style={{ height: '100%', width: '100%' }} />
             
+            {/* PANTALLA DE CARGA VISIBLE */}
             {isLoading && (
-              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(19, 23, 34, 0.8)', zIndex: 10 }}>
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(19, 23, 34, 0.85)', zIndex: 10 }}>
                 <div className="loader"></div>
-                <p style={{ marginTop: '10px', color: '#26a69a' }}>Sincronizando...</p>
+                <h3 style={{ color: '#26a69a', margin: 0, letterSpacing: '2px' }}>DESCARGANDO DATOS...</h3>
               </div>
             )}
 
-            {selectedNews && !isLoading && (
+            {/* PANTALLA DE ERROR VISIBLE (El Chivato) */}
+            {chartError && !isLoading && (
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(239, 83, 80, 0.1)', zIndex: 10, padding: '20px', textAlign: 'center' }}>
+                <span style={{ fontSize: '40px', marginBottom: '10px' }}>⚠️</span>
+                <h3 style={{ color: '#ef5350', margin: 0 }}>Error al cargar gráfico</h3>
+                <p style={{ color: '#d1d4dc' }}>{chartError}</p>
+                <p style={{ color: '#787B86', fontSize: '12px' }}>Intenta buscar otro Ticker válido (Ej: MSFT, TSLA)</p>
+              </div>
+            )}
+
+            {/* POP-UP DE NOTICIAS */}
+            {selectedNews && !isLoading && !chartError && (
                <div style={{ position: 'absolute', top: '20px', left: '20px', width: '300px', backgroundColor: '#1E222D', borderLeft: '4px solid #2962FF', padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
                   <div style={{ fontSize: '11px', color: '#787B86', display: 'flex', justifyContent: 'space-between' }}><span>{selectedNews.fuente}</span><span style={{ cursor: 'pointer' }} onClick={() => setSelectedNews(null)}>✕</span></div>
-                  <p style={{ fontWeight: 'bold', fontSize: '14px', margin: '10px 0' }}>{selectedNews.titulo}</p>
-                  <a href={selectedNews.url} target="_blank" rel="noreferrer" style={{ color: '#26a69a', textDecoration: 'none', fontSize: '12px', fontWeight: 'bold' }}>Ver noticia ↗</a>
+                  <p style={{ fontWeight: 'bold', fontSize: '14px', margin: '10px 0', lineHeight: '1.4' }}>{selectedNews.titulo}</p>
+                  <a href={selectedNews.url} target="_blank" rel="noreferrer" style={{ color: '#26a69a', textDecoration: 'none', fontSize: '12px', fontWeight: 'bold' }}>Leer original ↗</a>
                 </div>
             )}
           </div>
         </div>
 
-        {/* LADO DERECHO: Paneles de Calendario y Fear & Greed */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px', overflow: 'hidden' }}>
-            <EconomicCalendar />
-          </div>
-          <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px', overflow: 'hidden' }}>
-            <FearAndGreed />
-          </div>
+          <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px', overflow: 'hidden' }}><EconomicCalendar /></div>
+          <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px', overflow: 'hidden' }}><FearAndGreed /></div>
         </div>
       </div>
     </div>
