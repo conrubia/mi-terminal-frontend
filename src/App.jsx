@@ -1,129 +1,71 @@
-import { useEffect, useRef, useState } from 'react';
-import { createChart, CandlestickSeries, createSeriesMarkers } from 'lightweight-charts';
-import EconomicCalendar from "./EconomicCalendar";
-import FearAndGreed from "./FearAndGreed";
+import { useEffect, useState, memo } from 'react';
 
-function App() {
-  const chartContainerRef = useRef(null);
-  const chartInstance = useRef(null); 
-  const newsMapRef = useRef({}); 
+const FearAndGreed = () => {
+  const RENDER_URL = "https://mi-terminal-backend.onrender.com"; // <-- PON TU URL DE RENDER
   
-  const [ticker, setTicker] = useState('AAPL');
-  const [timeframe, setTimeframe] = useState('1Y');
-  const [selectedNews, setSelectedNews] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [searchInput, setSearchInput] = useState('');
-
-  const RENDER_URL = "https://mi-terminal-backend.onrender.com"; 
+  const [cryptoData, setCryptoData] = useState({ value: 50, label: 'Cargando...' });
+  const [stockData, setStockData] = useState({ value: 50, label: 'Cargando...' });
 
   useEffect(() => {
-    if (!chartContainerRef.current) return;
-    let isMounted = true;
-    setIsLoading(true);
-    chartContainerRef.current.innerHTML = '';
-
-    const chart = createChart(chartContainerRef.current, {
-      layout: { background: { type: 'solid', color: '#131722' }, textColor: '#d1d4dc' },
-      grid: { vertLines: { color: '#2B2B43' }, horzLines: { color: '#2B2B43' } },
-      width: chartContainerRef.current.clientWidth,
-      height: 600,
-      crosshair: { mode: 0 }
-    });
-    chartInstance.current = chart;
-
-    const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350',
-    });
-
-    const fetchData = async () => {
+    // 1. API Crypto (No requiere proxy)
+    const fetchCrypto = async () => {
       try {
-        const resP = await fetch(`${RENDER_URL}/api/precios/${ticker}?timeframe=${timeframe.toLowerCase()}`);
-        const candleData = await resP.json();
-        if (!isMounted || !Array.isArray(candleData)) return;
-        candleSeries.setData(candleData);
-
-        const resN = await fetch(`${RENDER_URL}/api/analisis/${ticker}`);
-        const newsData = await resN.json();
-
-        if (Array.isArray(newsData) && isMounted) {
-            const markers = [];
-            const localNewsMap = {};
-
-            newsData.forEach(news => {
-                // LÓGICA DE ENLACE: Buscar el día más cercano en el gráfico
-                const match = candleData.reduce((prev, curr) => {
-                    return (Math.abs(new Date(curr.time) - new Date(news.fecha)) < Math.abs(new Date(prev.time) - new Date(news.fecha)) ? curr : prev);
-                });
-
-                if (match) {
-                    localNewsMap[match.time] = news;
-                    markers.push({ time: match.time, position: 'aboveBar', color: '#2962FF', shape: 'circle', text: 'N' });
-                }
-            });
-            newsMapRef.current = localNewsMap;
-            createSeriesMarkers(candleSeries, markers);
+        const res = await fetch('https://api.alternative.me/fng/');
+        const json = await res.json();
+        if (json && json.data && json.data[0]) {
+          setCryptoData({ value: parseInt(json.data[0].value), label: json.data[0].value_classification });
         }
-        chart.timeScale().fitContent();
-      } catch (e) { console.error(e); } finally { if (isMounted) setIsLoading(false); }
+      } catch (error) {
+        console.error("Error Crypto:", error);
+      }
     };
 
-    fetchData();
-    chart.subscribeClick((p) => {
-        const d = p.time ? (typeof p.time === 'string' ? p.time : `${p.time.year}-${String(p.time.month).padStart(2, '0')}-${String(p.time.day).padStart(2, '0')}`) : null;
-        setSelectedNews(newsMapRef.current[d] || null);
-    });
+    // 2. API Bolsa USA (Ahora llama a nuestro propio Backend)
+    const fetchStock = async () => {
+      try {
+        const res = await fetch(`${RENDER_URL}/api/feargreed`);
+        const json = await res.json();
+        if (json && json.value) {
+          setStockData({ value: json.value, label: json.label });
+        }
+      } catch (error) {
+        setStockData({ value: 50, label: 'Neutral (Error)' });
+      }
+    };
 
-    return () => { isMounted = false; chart.remove(); };
-  }, [ticker, timeframe]);
+    fetchCrypto();
+    fetchStock();
+  }, []);
 
-  return (
-    <div style={{ padding: '20px', backgroundColor: '#0c0d10', minHeight: '100vh', color: 'white', fontFamily: 'sans-serif' }}>
-      <style>{`
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .loader { border: 4px solid #1e222d; border-top: 4px solid #26a69a; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
-      `}</style>
+  const getLabelEs = (label) => {
+    const map = { 'Extreme Fear': 'Miedo Extremo', 'Fear': 'Miedo', 'Neutral': 'Neutral', 'Greed': 'Codicia', 'Extreme Greed': 'Codicia Extrema' };
+    return map[label] || label;
+  };
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '20px', maxWidth: '1400px', margin: '0 auto', alignItems: 'stretch' }}>
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
-            <h2 style={{ margin: 0 }}>{ticker} <span style={{ color: '#787B86', fontSize: '14px' }}>Terminal</span></h2>
-            <form onSubmit={(e) => { e.preventDefault(); setTicker(searchInput.toUpperCase()); setSearchInput(''); }}>
-              <input value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="Ticker..." style={{ padding: '10px', borderRadius: '6px', border: '1px solid #2B2B43', backgroundColor: '#1E222D', color: 'white' }} />
-            </form>
-          </div>
-
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '15px' }}>
-            {['1M', '6M', '1Y', 'MAX'].map(t => (
-              <button key={t} onClick={() => setTimeframe(t)} style={{ padding: '6px 12px', backgroundColor: timeframe === t ? '#26a69a' : '#1E222D', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t}</button>
-            ))}
-          </div>
-
-          <div style={{ position: 'relative', border: '1px solid #2B2B43', borderRadius: '8px', overflow: 'hidden', flexGrow: 1, minHeight: '600px', backgroundColor: '#131722' }}>
-            <div ref={chartContainerRef} style={{ height: '100%' }} />
-            
-            {isLoading && (
-              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(19, 23, 34, 0.8)', zIndex: 10 }}>
-                <div className="loader"></div>
-                <p style={{ marginTop: '10px', color: '#26a69a' }}>Sincronizando...</p>
-              </div>
-            )}
-
-            {selectedNews && !isLoading && (
-               <div style={{ position: 'absolute', top: '20px', left: '20px', width: '300px', backgroundColor: '#1E222D', borderLeft: '4px solid #2962FF', padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
-                  <div style={{ fontSize: '11px', color: '#787B86', display: 'flex', justifyContent: 'space-between' }}><span>{selectedNews.fuente}</span><span style={{ cursor: 'pointer' }} onClick={() => setSelectedNews(null)}>✕</span></div>
-                  <p style={{ fontWeight: 'bold', fontSize: '14px', margin: '10px 0' }}>{selectedNews.titulo}</p>
-                  <a href={selectedNews.url} target="_blank" rel="noreferrer" style={{ color: '#26a69a', textDecoration: 'none', fontSize: '12px', fontWeight: 'bold' }}>Ver noticia ↗</a>
-                </div>
-            )}
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px' }}><EconomicCalendar /></div>
-          <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px' }}><FearAndGreed /></div>
-        </div>
+  const GaugeBar = ({ title, data }) => (
+    <div style={{ marginBottom: '20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+        <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#d1d4dc' }}>{title}</span>
+        <span style={{ fontSize: '13px', color: '#787B86', fontWeight: 'bold' }}>{data.value}/100</span>
+      </div>
+      <div style={{ position: 'relative', height: '10px', borderRadius: '5px', background: 'linear-gradient(to right, #ef5350, #ff9800, #FFD700, #8bc34a, #26a69a)', marginBottom: '8px' }}>
+        <div style={{ position: 'absolute', top: '-4px', left: `calc(${data.value}% - 2px)`, width: '4px', height: '18px', backgroundColor: '#ffffff', borderRadius: '2px', boxShadow: '0 0 5px rgba(0,0,0,0.8)', transition: 'left 1.5s ease-in-out' }} />
+      </div>
+      <div style={{ textAlign: 'center', fontSize: '11px', color: '#D1D4DC', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px' }}>
+        {getLabelEs(data.label)}
       </div>
     </div>
   );
-}
-export default App;
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+      <h3 style={{ margin: '0 0 15px 0', fontSize: '14px', color: '#d1d4dc', borderBottom: '1px solid #2B2B43', paddingBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <span>🧭</span> Índice Fear & Greed
+      </h3>
+      <GaugeBar title="S&P 500 (Bolsa USA)" data={stockData} />
+      <GaugeBar title="Mercado Cripto" data={cryptoData} />
+    </div>
+  );
+};
+
+export default memo(FearAndGreed);
