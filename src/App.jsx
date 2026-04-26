@@ -57,14 +57,14 @@ const MapaMaritimo = () => (
         <span style={{ fontSize: '10px', color: '#787B86', backgroundColor: 'rgba(255,255,255,0.05)', padding: '3px 6px', borderRadius: '4px' }}>AIS SATÉLITE EN DIRECTO</span>
     </div>
     <div style={{ flex: 1, width: '100%' }}>
-      {/* Usamos el iframe oficial de VesselFinder para tener el mapa mundial gratis */}
+      {/* Hemos corregido el 100% por 100%25 en la URL para evitar errores de sintaxis */}
       <iframe
         name="vesselfinder"
         id="vesselfinder"
         width="100%"
         height="100%"
         frameBorder="0"
-        src="https://www.vesselfinder.com/aismap?zoom=3&lat=25&lon=0&width=100%&height=100%&names=false&mmsi=0&track=false&fleet=false&fleet_name=false&fleet_hide_unnamed=false&clicktoact=false&store_pos=true"
+        src="https://www.vesselfinder.com/aismap?zoom=3&lat=25&lon=0&width=100%25&height=100%25&names=false&mmsi=0&track=false&fleet=false&fleet_name=false&fleet_hide_unnamed=false&clicktoact=false&store_pos=true"
         style={{ display: 'block' }}
       ></iframe>
     </div>
