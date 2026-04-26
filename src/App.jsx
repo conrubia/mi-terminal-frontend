@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { createChart, CandlestickSeries, HistogramSeries } from 'lightweight-charts';
+import { createChart } from 'lightweight-charts'; // Importación limpia, solo createChart
 import EconomicCalendar from "./EconomicCalendar";
 import FearAndGreed from "./FearAndGreed";
 
@@ -144,7 +144,6 @@ function App() {
         if (tipo === 'evento') localMap[v.time].evento = item;
     };
 
-    // 1. Registrar Datos Externos (Solo si la capa está activada)
     if (Array.isArray(events) && sEvents) {
         events.forEach(e => registrarEnMapa(e.fecha, 'evento', e));
     }
@@ -167,7 +166,6 @@ function App() {
         });
     }
 
-    // 2. ESCÁNER MATEMÁTICO DE PATRONES
     if (sPatterns) {
         for (let i = 1; i < candle.length; i++) {
             const prev = candle[i-1];
@@ -212,12 +210,10 @@ function App() {
         }
     }
 
-    // 3. Procesar para dibujar
     Object.keys(localMap).forEach(fecha => {
         const d = localMap[fecha];
         if (d.evento) volumeMarkers.push({ time: fecha, position: 'belowBar', color: d.evento.color, shape: 'square', text: 'E', size: 1 });
         
-        // Evitar superposición visual si hay un patrón en esa vela
         if (!d.patron) {
             if (d.noticias.length > 0) candleMarkers.push({ time: fecha, position: 'aboveBar', color: d.noticias[0].color, shape: 'circle', text: d.noticias.length > 1 ? `N${d.noticias.length}` : 'N', size: 1 });
             else if (d.tweets.length > 0) candleMarkers.push({ time: fecha, position: 'aboveBar', color: '#1DA1F2', shape: 'circle', text: d.tweets.length > 1 ? `T${d.tweets.length}` : 'T', size: 1 });
@@ -236,7 +232,7 @@ function App() {
     candleMarkers.sort((a, b) => new Date(a.time) - new Date(b.time));
     volumeMarkers.sort((a, b) => new Date(a.time) - new Date(b.time));
     
-    // --- SOLUCIÓN: Usamos setMarkers para actualizar/limpiar correctamente las capas ---
+    // El dibujo ahora usará los métodos estándar de la librería
     seriesRef.current.candle.setMarkers(candleMarkers);
     seriesRef.current.volume.setMarkers(volumeMarkers);
   };
@@ -260,10 +256,11 @@ function App() {
     });
     chartInstance.current = chart;
 
-    const candleSeries = chart.addSeries(CandlestickSeries, { upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350' });
+    // --- SOLUCIÓN APLICADA: Uso de las funciones estándar de Lightweight Charts ---
+    const candleSeries = chart.addCandlestickSeries({ upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350' });
     candleSeries.applyOptions({ lastValueVisible: true, priceLineVisible: true });
 
-    const volumeSeries = chart.addSeries(HistogramSeries, { color: '#26a69a', priceFormat: { type: 'volume' }, priceScaleId: '' });
+    const volumeSeries = chart.addHistogramSeries({ color: '#26a69a', priceFormat: { type: 'volume' }, priceScaleId: '' });
     volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
 
     seriesRef.current = { candle: candleSeries, volume: volumeSeries };
