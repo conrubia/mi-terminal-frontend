@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { createChart } from 'lightweight-charts'; // Importación limpia, solo createChart
+import { createChart, CandlestickSeries, HistogramSeries, createSeriesMarkers } from 'lightweight-charts';
 import EconomicCalendar from "./EconomicCalendar";
 import FearAndGreed from "./FearAndGreed";
 
@@ -67,7 +67,7 @@ function App() {
   const chartInstance = useRef(null); 
   const interactiveMapRef = useRef({}); 
   const dataRef = useRef({ candle: [], news: [], events: [], tweets: [] });
-  const seriesRef = useRef({ candle: null, volume: null });
+  const seriesRef = useRef({ candle: null, volume: null, candleMarkers: null, volumeMarkers: null });
   
   const [ticker, setTicker] = useState(() => new URLSearchParams(window.location.search).get('ticker') || 'AAPL');
   const [timeframe, setTimeframe] = useState('1Y');
@@ -127,6 +127,9 @@ function App() {
   const aplicarMarcadores = (filtro, sNews, sTweets, sEvents, sPatterns) => {
     const { candle, news, events, tweets } = dataRef.current;
     if (!seriesRef.current.candle || !seriesRef.current.volume || !candle.length) return;
+    
+    // Si los plugins de marcadores aún no están creados, salimos
+    if (!seriesRef.current.candleMarkers || !seriesRef.current.volumeMarkers) return;
 
     const candleMarkers = [];
     const volumeMarkers = [];
@@ -232,9 +235,9 @@ function App() {
     candleMarkers.sort((a, b) => new Date(a.time) - new Date(b.time));
     volumeMarkers.sort((a, b) => new Date(a.time) - new Date(b.time));
     
-    // El dibujo ahora usará los métodos estándar de la librería
-    seriesRef.current.candle.setMarkers(candleMarkers);
-    seriesRef.current.volume.setMarkers(volumeMarkers);
+    // --- NUEVA ARQUITECTURA V5: Actualizamos usando el plugin de marcadores ---
+    seriesRef.current.candleMarkers.setMarkers(candleMarkers);
+    seriesRef.current.volumeMarkers.setMarkers(volumeMarkers);
   };
 
   useEffect(() => { aplicarMarcadores(newsFilter, showNews, showTweets, showEvents, showPatterns); }, [newsFilter, showNews, showTweets, showEvents, showPatterns]);
@@ -256,14 +259,23 @@ function App() {
     });
     chartInstance.current = chart;
 
-    // --- SOLUCIÓN APLICADA: Uso de las funciones estándar de Lightweight Charts ---
-    const candleSeries = chart.addCandlestickSeries({ upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350' });
+    // --- NUEVA ARQUITECTURA V5: Sintaxis correcta para crear series ---
+    const candleSeries = chart.addSeries(CandlestickSeries, { upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350' });
     candleSeries.applyOptions({ lastValueVisible: true, priceLineVisible: true });
 
-    const volumeSeries = chart.addHistogramSeries({ color: '#26a69a', priceFormat: { type: 'volume' }, priceScaleId: '' });
+    const volumeSeries = chart.addSeries(HistogramSeries, { color: '#26a69a', priceFormat: { type: 'volume' }, priceScaleId: '' });
     volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
 
-    seriesRef.current = { candle: candleSeries, volume: volumeSeries };
+    // --- NUEVA ARQUITECTURA V5: Los marcadores se instancian como plugins independientes ---
+    const candleMarkersPlugin = createSeriesMarkers(candleSeries);
+    const volumeMarkersPlugin = createSeriesMarkers(volumeSeries);
+
+    seriesRef.current = { 
+      candle: candleSeries, 
+      volume: volumeSeries,
+      candleMarkers: candleMarkersPlugin,
+      volumeMarkers: volumeMarkersPlugin
+    };
 
     const fetchData = async () => {
       try {
