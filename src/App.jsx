@@ -13,7 +13,8 @@ function App() {
   const [ticker, setTicker] = useState(() => new URLSearchParams(window.location.search).get('ticker') || 'AAPL');
   const [timeframe, setTimeframe] = useState('1Y');
   
-  const [selectedItem, setSelectedItem] = useState({ noticia: null, evento: null, tweet: null }); 
+  // Ahora selectedItem almacena ARRAYS para poder agrupar múltiples eventos en un mismo día
+  const [selectedItem, setSelectedItem] = useState({ noticias: [], tweets: [], evento: null }); 
   const [isLoading, setIsLoading] = useState(true);
   const [chartError, setChartError] = useState(null);
   const [searchInput, setSearchInput] = useState('');
@@ -56,7 +57,7 @@ function App() {
             setTicker(query.toUpperCase());
         }
         setSearchInput('');
-        setSelectedItem({ noticia: null, evento: null, tweet: null });
+        setSelectedItem({ noticias: [], tweets: [], evento: null });
     }
   };
 
@@ -66,57 +67,67 @@ function App() {
 
     const candleMarkers = [];
     const volumeMarkers = [];
-    const localMap = {};
+    const localMap = {}; // { fecha: { noticias: [], tweets: [], evento: null } }
 
     const encontrarVela = (f) => candle.reduce((p, c) => (Math.abs(new Date(c.time) - new Date(f)) < Math.abs(new Date(p.time) - new Date(f)) ? c : p));
 
-    // EVENTOS MACRO (Abajo)
+    const registrarEnMapa = (fechaStr, tipo, item) => {
+        const v = encontrarVela(fechaStr);
+        if (!v) return;
+        if (!localMap[v.time]) localMap[v.time] = { noticias: [], tweets: [], evento: null };
+        
+        if (tipo === 'noticia') localMap[v.time].noticias.push(item);
+        if (tipo === 'tweet') localMap[v.time].tweets.push(item);
+        if (tipo === 'evento') localMap[v.time].evento = item;
+    };
+
+    // Registrar Eventos Macro
     if (Array.isArray(events)) {
-        events.forEach(e => {
-            const v = encontrarVela(e.fecha);
-            if (v) {
-                if (!localMap[v.time]) localMap[v.time] = { noticia: null, evento: null, tweet: null };
-                localMap[v.time].evento = e;
-                volumeMarkers.push({ time: v.time, position: 'belowBar', color: e.color || '#FF9800', shape: 'square', text: 'E', size: 1 });
-            }
-        });
+        events.forEach(e => registrarEnMapa(e.fecha, 'evento', e));
     }
 
-    // TWEETS SOCIALES (Arriba)
+    // Registrar Tweets
     if (Array.isArray(tweets)) {
         tweets.forEach(t => {
             if (filtro === 'ALCISTA' && t.impacto !== 'Alcista') return;
             if (filtro === 'BAJISTA' && t.impacto !== 'Bajista') return;
             if (filtro === 'NEUTRAL' && t.impacto !== 'Neutral') return;
-            const v = encontrarVela(t.fecha);
-            if (v) {
-                if (!localMap[v.time]) localMap[v.time] = { noticia: null, evento: null, tweet: null };
-                if (!localMap[v.time].tweet) {
-                    localMap[v.time].tweet = t;
-                    candleMarkers.push({ time: v.time, position: 'aboveBar', color: t.color, shape: 'circle', text: 'T', size: 1 });
-                }
-            }
+            registrarEnMapa(t.fecha, 'tweet', t);
         });
     }
 
-    // NOTICIAS (Arriba)
+    // Registrar Noticias
     if (Array.isArray(news)) {
         news.forEach(n => {
             if (filtro === 'ALCISTA' && n.impacto !== 'Alcista') return;
             if (filtro === 'BAJISTA' && n.impacto !== 'Bajista') return;
             if (filtro === 'NEUTRAL' && n.impacto !== 'Neutral') return;
-            const v = encontrarVela(n.fecha);
-            if (v) {
-                if (!localMap[v.time]) localMap[v.time] = { noticia: null, evento: null, tweet: null };
-                if (!localMap[v.time].noticia) {
-                    localMap[v.time].noticia = n;
-                    candleMarkers.push({ time: v.time, position: 'aboveBar', color: n.color, shape: 'circle', text: 'N', size: 1 });
-                }
-            }
+            registrarEnMapa(n.fecha, 'noticia', n);
         });
     }
 
-    // MAX Y MIN
+    // Generar Marcadores desde el Mapa Agrupado
+    Object.keys(localMap).forEach(fecha => {
+        const d = localMap[fecha];
+        
+        if (d.evento) {
+            volumeMarkers.push({ time: fecha, position: 'belowBar', color: d.evento.color, shape: 'square', text: 'E', size: 1 });
+        }
+        if (d.noticias.length > 0) {
+            candleMarkers.push({ 
+                time: fecha, position: 'aboveBar', color: d.noticias[0].color, shape: 'circle', 
+                text: d.noticias.length > 1 ? `N${d.noticias.length}` : 'N', size: 1 
+            });
+        }
+        if (d.tweets.length > 0) {
+            candleMarkers.push({ 
+                time: fecha, position: 'aboveBar', color: '#1DA1F2', shape: 'circle', 
+                text: d.tweets.length > 1 ? `T${d.tweets.length}` : 'T', size: 1 
+            });
+        }
+    });
+
+    // Etiquetas MÁX y MÍN
     let max = -Infinity, min = Infinity, maxTime, minTime;
     candle.forEach(d => {
         if (d.high > max) { max = d.high; maxTime = d.time; }
@@ -170,7 +181,6 @@ function App() {
         candleSeries.setData(candleData);
         volumeSeries.setData(candleData.map(d => ({ time: d.time, value: d.value || 0, color: d.close >= d.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)' })));
 
-        // Carga cuádruple: Noticias, Eventos, Info y TWEETS SOCIALES
         const [resN, resE, resInfo, resT] = await Promise.all([
           fetch(`${RENDER_URL}/api/analisis/${ticker}`).then(r => r.json()),
           fetch(`${RENDER_URL}/api/eventos_macro`).then(r => r.json()),
@@ -196,7 +206,7 @@ function App() {
     chart.subscribeClick((p) => {
         const d = p.time ? (typeof p.time === 'string' ? p.time : `${p.time.year}-${String(p.time.month).padStart(2, '0')}-${String(p.time.day).padStart(2, '0')}`) : null;
         if (d && interactiveMapRef.current[d]) setSelectedItem(interactiveMapRef.current[d]);
-        else setSelectedItem({ noticia: null, evento: null, tweet: null });
+        else setSelectedItem({ noticias: [], tweets: [], evento: null });
     });
 
     chart.subscribeCrosshairMove((param) => {
@@ -207,27 +217,47 @@ function App() {
     return () => { isMounted = false; chart.remove(); };
   }, [ticker, timeframe]);
 
-  // Componentes de Tarjetas
-  const PopupNoticia = ({ data, onClose }) => (
-    <div style={{ position: 'absolute', top: '50px', left: '20px', width: '300px', backgroundColor: '#1E222D', borderLeft: `4px solid ${data.color}`, padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}><div style={{ fontSize: '11px', color: '#787B86', display: 'flex', justifyContent: 'space-between' }}><span>📰 {data.fuente}</span><span style={{ cursor: 'pointer', padding: '0 5px' }} onClick={onClose}>✕</span></div><p style={{ fontWeight: 'bold', fontSize: '14px', margin: '10px 0', lineHeight: '1.4' }}>{data.titulo}</p><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px', borderTop: '1px solid #2B2B43', paddingTop: '10px' }}><span style={{ fontSize: '12px', fontWeight: 'bold', color: data.color, backgroundColor: 'rgba(255,255,255,0.05)', padding: '4px 8px', borderRadius: '4px' }}>Impacto: {data.impacto}</span><a href={data.url} target="_blank" rel="noreferrer" style={{ color: '#d1d4dc', textDecoration: 'none', fontSize: '12px', fontWeight: 'bold' }}>Leer ↗</a></div></div>
-  );
-  
-  const PopupEventoMacro = ({ data, onClose }) => (
-    <div style={{ position: 'absolute', bottom: '20px', right: '20px', width: '280px', backgroundColor: '#2a1a1a', border: `1px solid ${data.color}`, borderRadius: '6px', padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}><div style={{ fontSize: '11px', color: '#FF9800', display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontWeight: 'bold' }}><span>⚠️ EVENTO MACRO (3 TOROS)</span><span style={{ cursor: 'pointer', padding: '0 5px', color: '#d1d4dc' }} onClick={onClose}>✕</span></div><p style={{ fontWeight: 'bold', fontSize: '15px', margin: '0 0 15px 0', color: 'white' }}>{data.titulo}</p><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '5px', textAlign: 'center', backgroundColor: 'rgba(0,0,0,0.3)', padding: '10px', borderRadius: '4px' }}><div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Actual</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: 'white' }}>{data.actual}</div></div><div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Prev</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: '#d1d4dc' }}>{data.prev}</div></div><div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Anterior</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: '#787B86' }}>{data.ant}</div></div></div></div>
-  );
-
-  const PopupTweet = ({ data, onClose }) => (
-    <div style={{ position: 'absolute', top: '50px', right: '20px', width: '280px', backgroundColor: '#15202B', borderLeft: `4px solid ${data.color}`, borderRadius: '8px', padding: '15px', zIndex: 25, boxShadow: '0 10px 30px rgba(0,0,0,0.6)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
-        <span style={{ color: '#1DA1F2', fontWeight: 'bold', fontSize: '13px' }}>💬 {data.usuario}</span>
+  // --- COMPONENTES DE TARJETAS (Ahora soportan múltiples items con Scroll) ---
+  const PopupNoticias = ({ items, onClose }) => (
+    <div style={{ position: 'absolute', top: '50px', left: '20px', width: '320px', maxHeight: '400px', overflowY: 'auto', backgroundColor: '#1E222D', borderRadius: '8px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.6)', padding: '10px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', padding: '0 5px 10px', borderBottom: '1px solid #2B2B43' }}>
+        <span style={{ fontWeight: 'bold' }}>📰 Noticias del día ({items.length})</span>
         <span style={{ cursor: 'pointer', color: '#787B86' }} onClick={onClose}>✕</span>
       </div>
-      <p style={{ fontSize: '14px', color: 'white', lineHeight: '1.4', margin: '0 0 15px 0' }}>{data.texto}</p>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #38444d', paddingTop: '10px' }}>
-        <span style={{ fontSize: '11px', fontWeight: 'bold', color: data.color }}>SENTIMIENTO: {data.impacto.toUpperCase()}</span>
-        <a href={data.url} target="_blank" rel="noreferrer" style={{ color: '#1DA1F2', textDecoration: 'none', fontSize: '12px', fontWeight: 'bold' }}>Ver ↗</a>
-      </div>
+      {items.map((data, i) => (
+        <div key={i} style={{ borderLeft: `3px solid ${data.color}`, padding: '10px', marginBottom: '10px', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: '0 6px 6px 0' }}>
+          <div style={{ fontSize: '11px', color: '#787B86' }}>{data.fuente}</div>
+          <p style={{ fontWeight: 'bold', fontSize: '13px', margin: '8px 0', lineHeight: '1.4' }}>{data.titulo}</p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px' }}>
+            <span style={{ fontSize: '11px', fontWeight: 'bold', color: data.color }}>{data.impacto.toUpperCase()}</span>
+            <a href={data.url} target="_blank" rel="noreferrer" style={{ color: '#d1d4dc', textDecoration: 'none', fontSize: '11px', fontWeight: 'bold' }}>Leer ↗</a>
+          </div>
+        </div>
+      ))}
     </div>
+  );
+
+  const PopupTweets = ({ items, onClose }) => (
+    <div style={{ position: 'absolute', top: '50px', right: '20px', width: '320px', maxHeight: '400px', overflowY: 'auto', backgroundColor: '#15202B', borderRadius: '8px', zIndex: 25, boxShadow: '0 10px 30px rgba(0,0,0,0.6)', padding: '10px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', padding: '0 5px 10px', borderBottom: '1px solid #38444d' }}>
+        <span style={{ color: '#1DA1F2', fontWeight: 'bold', fontSize: '13px' }}>💬 Social Feed ({items.length})</span>
+        <span style={{ cursor: 'pointer', color: '#787B86' }} onClick={onClose}>✕</span>
+      </div>
+      {items.map((data, i) => (
+        <div key={i} style={{ borderLeft: `3px solid ${data.color}`, padding: '10px', marginBottom: '10px', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: '0 6px 6px 0' }}>
+          <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#1DA1F2', marginBottom: '6px' }}>{data.usuario}</div>
+          <p style={{ fontSize: '13px', color: 'white', lineHeight: '1.4', margin: '0 0 10px 0' }}>{data.texto}</p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '11px', fontWeight: 'bold', color: data.color }}>{data.impacto.toUpperCase()}</span>
+            <a href={data.url} target="_blank" rel="noreferrer" style={{ color: '#1DA1F2', textDecoration: 'none', fontSize: '11px', fontWeight: 'bold' }}>Ver ↗</a>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const PopupEventoMacro = ({ data, onClose }) => (
+    <div style={{ position: 'absolute', bottom: '20px', right: '20px', width: '280px', backgroundColor: '#2a1a1a', border: `1px solid ${data.color}`, borderRadius: '6px', padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}><div style={{ fontSize: '11px', color: '#FF9800', display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontWeight: 'bold' }}><span>⚠️ EVENTO MACRO (3 TOROS)</span><span style={{ cursor: 'pointer', padding: '0 5px', color: '#d1d4dc' }} onClick={onClose}>✕</span></div><p style={{ fontWeight: 'bold', fontSize: '15px', margin: '0 0 15px 0', color: 'white' }}>{data.titulo}</p><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '5px', textAlign: 'center', backgroundColor: 'rgba(0,0,0,0.3)', padding: '10px', borderRadius: '4px' }}><div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Actual</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: 'white' }}>{data.actual}</div></div><div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Prev</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: '#d1d4dc' }}>{data.prev}</div></div><div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Anterior</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: '#787B86' }}>{data.ant}</div></div></div></div>
   );
 
   return (
@@ -241,6 +271,11 @@ function App() {
         @keyframes scroll { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
         @keyframes pulse { 0% {opacity: 0.5;} 50% {opacity: 1;} 100% {opacity: 0.5;} }
         .skeleton { animation: pulse 1.5s infinite; background: #1E222D; border-radius: 8px; width: 100%; height: 100%; min-height: 200px; border: 1px solid #2B2B43;}
+        /* Estilos para el scroll de los popups */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #38444d; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #556877; }
       `}</style>
 
       {marketData.length > 0 && (
@@ -329,8 +364,9 @@ function App() {
               </div>
             )}
 
-            {selectedItem?.noticia && <PopupNoticia data={selectedItem.noticia} onClose={() => setSelectedItem(prev => ({ ...prev, noticia: null }))} />}
-            {selectedItem?.tweet && <PopupTweet data={selectedItem.tweet} onClose={() => setSelectedItem(prev => ({ ...prev, tweet: null }))} />}
+            {/* Renderizado condicional de los Popups Scrollables */}
+            {selectedItem?.noticias?.length > 0 && <PopupNoticias items={selectedItem.noticias} onClose={() => setSelectedItem(prev => ({ ...prev, noticias: [] }))} />}
+            {selectedItem?.tweets?.length > 0 && <PopupTweets items={selectedItem.tweets} onClose={() => setSelectedItem(prev => ({ ...prev, tweets: [] }))} />}
             {selectedItem?.evento && <PopupEventoMacro data={selectedItem.evento} onClose={() => setSelectedItem(prev => ({ ...prev, evento: null }))} />}
           </div>
         </div>
