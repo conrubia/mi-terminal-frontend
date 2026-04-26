@@ -71,21 +71,22 @@ function App() {
   
   const [ticker, setTicker] = useState(() => new URLSearchParams(window.location.search).get('ticker') || 'AAPL');
   const [timeframe, setTimeframe] = useState('1Y');
-  
-  // Añadimos 'patron' al estado inicial
   const [selectedItem, setSelectedItem] = useState({ noticias: [], tweets: [], evento: null, patron: null }); 
   const [isLoading, setIsLoading] = useState(true);
   const [chartError, setChartError] = useState(null);
   const [searchInput, setSearchInput] = useState('');
-
   const [marketData, setMarketData] = useState([]);
   const [tickerInfo, setTickerInfo] = useState(null);
   const [favorites, setFavorites] = useState(() => JSON.parse(localStorage.getItem('terminal_favs')) || ['AAPL', 'MSFT', 'TSLA', 'BTC-USD']);
   
   const [newsFilter, setNewsFilter] = useState('ALL');
-  // NUEVO ESTADO: Interruptor para encender/apagar el escáner de patrones
-  const [showPatterns, setShowPatterns] = useState(false);
   const [crosshairData, setCrosshairData] = useState(null);
+
+  // --- NUEVOS ESTADOS: GESTOR DE CAPAS (Todo encendido por defecto excepto los patrones) ---
+  const [showNews, setShowNews] = useState(true);
+  const [showTweets, setShowTweets] = useState(true);
+  const [showEvents, setShowEvents] = useState(true);
+  const [showPatterns, setShowPatterns] = useState(false);
 
   // ⚠️ PON TU URL DE RENDER AQUÍ
   const RENDER_URL = "https://mi-terminal-backend.onrender.com"; 
@@ -123,7 +124,8 @@ function App() {
     }
   };
 
-  const aplicarMarcadores = (filtro, showPat) => {
+  // Función actualizada para recibir todos los estados de las capas
+  const aplicarMarcadores = (filtro, sNews, sTweets, sEvents, sPatterns) => {
     const { candle, news, events, tweets } = dataRef.current;
     if (!seriesRef.current.candle || !seriesRef.current.volume || !candle.length) return;
 
@@ -143,9 +145,12 @@ function App() {
         if (tipo === 'evento') localMap[v.time].evento = item;
     };
 
-    // 1. Registrar Datos Externos
-    if (Array.isArray(events)) events.forEach(e => registrarEnMapa(e.fecha, 'evento', e));
-    if (Array.isArray(tweets)) {
+    // 1. Registrar Datos Externos (Solo si la capa está activada)
+    if (Array.isArray(events) && sEvents) {
+        events.forEach(e => registrarEnMapa(e.fecha, 'evento', e));
+    }
+    
+    if (Array.isArray(tweets) && sTweets) {
         tweets.forEach(t => {
             if (filtro === 'ALCISTA' && t.impacto !== 'Alcista') return;
             if (filtro === 'BAJISTA' && t.impacto !== 'Bajista') return;
@@ -153,7 +158,8 @@ function App() {
             registrarEnMapa(t.fecha, 'tweet', t);
         });
     }
-    if (Array.isArray(news)) {
+
+    if (Array.isArray(news) && sNews) {
         news.forEach(n => {
             if (filtro === 'ALCISTA' && n.impacto !== 'Alcista') return;
             if (filtro === 'BAJISTA' && n.impacto !== 'Bajista') return;
@@ -162,8 +168,8 @@ function App() {
         });
     }
 
-    // 2. ESCÁNER MATEMÁTICO DE PATRONES (Solo si está activado)
-    if (showPat) {
+    // 2. ESCÁNER MATEMÁTICO DE PATRONES (Solo si la capa está activada)
+    if (sPatterns) {
         for (let i = 1; i < candle.length; i++) {
             const prev = candle[i-1];
             const curr = candle[i];
@@ -174,7 +180,6 @@ function App() {
 
             let patron = null;
 
-            // Doji (Indecisión - Cuerpo menor al 10% del rango total)
             if (range > 0 && body <= range * 0.1) {
                 patron = { nombre: 'Doji', tipo: 'Indecisión', desc: 'Apertura y cierre casi idénticos. Indica una fuerte indecisión o posible giro de tendencia.', color: '#FFD700', shape: 'circle', text: 'D' };
             } 
@@ -182,15 +187,12 @@ function App() {
                 const lowerShadow = Math.min(curr.open, curr.close) - curr.low;
                 const upperShadow = curr.high - Math.max(curr.open, curr.close);
 
-                // Martillo Alcista
                 if (lowerShadow >= 2 * body && upperShadow <= body * 0.2 && curr.close > curr.open) {
                     patron = { nombre: 'Martillo Alcista', tipo: 'Alcista', desc: 'Fuerte rechazo a la baja. Los compradores tomaron el control agresivamente.', color: '#26a69a', shape: 'arrowUp', text: 'M' };
                 }
-                // Envolvente Alcista
                 else if (prev.close < prev.open && curr.close > curr.open && curr.close >= prev.open && curr.open <= prev.close && body > prevBody) {
                     patron = { nombre: 'Envolvente Alcista', tipo: 'Alcista', desc: 'Vela de gran convicción compradora que anula por completo la caída del día anterior.', color: '#26a69a', shape: 'arrowUp', text: 'EA' };
                 }
-                // Envolvente Bajista
                 else if (prev.close > prev.open && curr.close < curr.open && curr.close <= prev.open && curr.open >= prev.close && body > prevBody) {
                     patron = { nombre: 'Envolvente Bajista', tipo: 'Bajista', desc: 'Los vendedores anulan todas las ganancias del día anterior. Fuerte señal de caída.', color: '#ef5350', shape: 'arrowDown', text: 'EB' };
                 }
@@ -215,7 +217,8 @@ function App() {
     Object.keys(localMap).forEach(fecha => {
         const d = localMap[fecha];
         if (d.evento) volumeMarkers.push({ time: fecha, position: 'belowBar', color: d.evento.color, shape: 'square', text: 'E', size: 1 });
-        // Solo dibujamos marcadores de noticias/tweets si en esa vela NO hay un patrón geométrico dibujado (para evitar superposición visual)
+        
+        // Evitar superposición visual si hay un patrón en esa vela
         if (!d.patron) {
             if (d.noticias.length > 0) candleMarkers.push({ time: fecha, position: 'aboveBar', color: d.noticias[0].color, shape: 'circle', text: d.noticias.length > 1 ? `N${d.noticias.length}` : 'N', size: 1 });
             else if (d.tweets.length > 0) candleMarkers.push({ time: fecha, position: 'aboveBar', color: '#1DA1F2', shape: 'circle', text: d.tweets.length > 1 ? `T${d.tweets.length}` : 'T', size: 1 });
@@ -237,7 +240,8 @@ function App() {
     createSeriesMarkers(seriesRef.current.volume, volumeMarkers);
   };
 
-  useEffect(() => { aplicarMarcadores(newsFilter, showPatterns); }, [newsFilter, showPatterns]);
+  // Se re-ejecuta cada vez que tocamos cualquier botón de capa o filtro IA
+  useEffect(() => { aplicarMarcadores(newsFilter, showNews, showTweets, showEvents, showPatterns); }, [newsFilter, showNews, showTweets, showEvents, showPatterns]);
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
@@ -285,7 +289,7 @@ function App() {
         if (isMounted) {
             dataRef.current = { candle: candleData, news: resN, events: resE, tweets: resT };
             setTickerInfo(resInfo);
-            aplicarMarcadores(newsFilter, showPatterns);
+            aplicarMarcadores(newsFilter, showNews, showTweets, showEvents, showPatterns);
         }
         chart.timeScale().fitContent();
       } catch (e) { 
@@ -310,6 +314,13 @@ function App() {
 
     return () => { isMounted = false; chart.remove(); };
   }, [ticker, timeframe]);
+
+  // --- BOTÓN REUTILIZABLE PARA LAS CAPAS ---
+  const ToggleButton = ({ label, active, onClick, color }) => (
+    <button onClick={onClick} style={{ padding: '4px 8px', backgroundColor: active ? `${color}20` : 'transparent', color: active ? color : '#787B86', border: `1px solid ${active ? color : '#2B2B43'}`, borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '11px', transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: '4px' }}>
+      {label}
+    </button>
+  );
 
   // --- COMPONENTES DE TARJETAS ---
   const PopupNoticias = ({ items, onClose }) => (
@@ -354,7 +365,6 @@ function App() {
     <div style={{ position: 'absolute', bottom: '20px', right: '20px', width: '280px', backgroundColor: '#2a1a1a', border: `1px solid ${data.color}`, borderRadius: '6px', padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}><div style={{ fontSize: '11px', color: '#FF9800', display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontWeight: 'bold' }}><span>⚠️ EVENTO MACRO (3 TOROS)</span><span style={{ cursor: 'pointer', padding: '0 5px', color: '#d1d4dc' }} onClick={onClose}>✕</span></div><p style={{ fontWeight: 'bold', fontSize: '15px', margin: '0 0 15px 0', color: 'white' }}>{data.titulo}</p><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '5px', textAlign: 'center', backgroundColor: 'rgba(0,0,0,0.3)', padding: '10px', borderRadius: '4px' }}><div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Actual</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: 'white' }}>{data.actual}</div></div><div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Prev</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: '#d1d4dc' }}>{data.prev}</div></div><div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Anterior</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: '#787B86' }}>{data.ant}</div></div></div></div>
   );
 
-  // NUEVO: Popup para Patrones Técnicos
   const PopupPatron = ({ data, onClose }) => (
     <div style={{ position: 'absolute', top: '20px', left: '50%', transform: 'translateX(-50%)', width: '300px', backgroundColor: '#1E222D', borderTop: `4px solid ${data.color}`, borderRadius: '8px', padding: '15px', zIndex: 30, boxShadow: '0 10px 30px rgba(0,0,0,0.8)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
@@ -439,20 +449,25 @@ function App() {
               ))}
             </div>
             
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '12px' }}>
-              {/* BOTÓN MÁGICO DE ESCANEO DE PATRONES */}
-              <button 
-                onClick={() => setShowPatterns(!showPatterns)} 
-                style={{ padding: '5px 12px', backgroundColor: showPatterns ? '#FF9800' : 'rgba(255,152,0,0.1)', color: showPatterns ? 'black' : '#FF9800', border: '1px solid #FF9800', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.3s' }}>
-                {showPatterns ? '✖ Ocultar Patrones' : '🔍 Escanear Patrones'}
-              </button>
+            <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+              
+              {/* --- NUEVA BOTONERA DE GESTIÓN DE CAPAS --- */}
+              <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                <span style={{ color: '#787B86', fontSize: '11px', fontWeight: 'bold', marginRight: '5px' }}>CAPAS:</span>
+                <ToggleButton label="📰 Noticias" active={showNews} onClick={() => setShowNews(!showNews)} color="#d1d4dc" />
+                <ToggleButton label="💬 Social" active={showTweets} onClick={() => setShowTweets(!showTweets)} color="#1DA1F2" />
+                <ToggleButton label="⚠️ Eventos" active={showEvents} onClick={() => setShowEvents(!showEvents)} color="#FF9800" />
+                <ToggleButton label="🔍 Patrones" active={showPatterns} onClick={() => setShowPatterns(!showPatterns)} color="#26a69a" />
+              </div>
 
-              <div style={{ width: '1px', height: '20px', backgroundColor: '#2B2B43', margin: '0 5px' }}></div>
+              <div style={{ width: '1px', height: '20px', backgroundColor: '#2B2B43' }}></div>
 
-              <span style={{ color: '#787B86', fontWeight: 'bold' }}>IA:</span>
-              {['ALL', 'ALCISTA', 'BAJISTA', 'NEUTRAL'].map(f => (
-                <button key={f} onClick={() => setNewsFilter(f)} style={{ padding: '4px 10px', backgroundColor: newsFilter === f ? '#2962FF' : 'rgba(255,255,255,0.05)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{f}</button>
-              ))}
+              <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                <span style={{ color: '#787B86', fontSize: '11px', fontWeight: 'bold', marginRight: '5px' }}>FILTRO IA:</span>
+                {['ALL', 'ALCISTA', 'BAJISTA', 'NEUTRAL'].map(f => (
+                  <button key={f} onClick={() => setNewsFilter(f)} style={{ padding: '4px 8px', backgroundColor: newsFilter === f ? '#2962FF' : 'rgba(255,255,255,0.05)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '11px' }}>{f}</button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -481,7 +496,6 @@ function App() {
               </div>
             )}
 
-            {/* RENDERIZADO DE POPUPS INCLUYENDO EL NUEVO PATRÓN */}
             {selectedItem?.patron && <PopupPatron data={selectedItem.patron} onClose={() => setSelectedItem(prev => ({ ...prev, patron: null }))} />}
             {!selectedItem?.patron && selectedItem?.noticias?.length > 0 && <PopupNoticias items={selectedItem.noticias} onClose={() => setSelectedItem(prev => ({ ...prev, noticias: [] }))} />}
             {!selectedItem?.patron && selectedItem?.tweets?.length > 0 && <PopupTweets items={selectedItem.tweets} onClose={() => setSelectedItem(prev => ({ ...prev, tweets: [] }))} />}
