@@ -7,27 +7,26 @@ function App() {
   const chartContainerRef = useRef(null);
   const chartInstance = useRef(null); 
   const interactiveMapRef = useRef({}); 
-  const dataRef = useRef({ candle: [], news: [], events: [] });
+  const dataRef = useRef({ candle: [], news: [], events: [], tweets: [] });
   const seriesRef = useRef({ candle: null, volume: null });
   
   const [ticker, setTicker] = useState(() => new URLSearchParams(window.location.search).get('ticker') || 'AAPL');
   const [timeframe, setTimeframe] = useState('1Y');
   
-  const [selectedItem, setSelectedItem] = useState({ noticia: null, evento: null }); 
+  const [selectedItem, setSelectedItem] = useState({ noticia: null, evento: null, tweet: null }); 
   const [isLoading, setIsLoading] = useState(true);
   const [chartError, setChartError] = useState(null);
   const [searchInput, setSearchInput] = useState('');
 
   const [marketData, setMarketData] = useState([]);
   const [tickerInfo, setTickerInfo] = useState(null);
-  const [favorites, setFavorites] = useState(() => JSON.parse(localStorage.getItem('terminal_favs')) || ['AAPL', 'MSFT', 'TSLA', 'NVDA']);
+  const [favorites, setFavorites] = useState(() => JSON.parse(localStorage.getItem('terminal_favs')) || ['AAPL', 'MSFT', 'TSLA', 'BTC-USD']);
   const [newsFilter, setNewsFilter] = useState('ALL');
   const [crosshairData, setCrosshairData] = useState(null);
 
   // ⚠️ PON TU URL DE RENDER AQUÍ
   const RENDER_URL = "https://mi-terminal-backend.onrender.com"; 
 
-  // --- CINTA DE COTIZACIONES ---
   useEffect(() => {
     fetch(`${RENDER_URL}/api/mercado`).then(r => r.json()).then(d => setMarketData(d)).catch(() => {});
   }, []);
@@ -44,27 +43,25 @@ function App() {
     localStorage.setItem('terminal_favs', JSON.stringify(favs));
   };
 
-  // --- BUSCADOR INTELIGENTE ---
   const manejarBusqueda = async (e) => {
     e.preventDefault();
     const query = searchInput.trim();
     if (query) {
         setIsLoading(true);
         try {
-            // Buscamos el ticker real en el backend antes de cargar el gráfico
             const res = await fetch(`${RENDER_URL}/api/buscar/${query}`);
             const data = await res.json();
-            setTicker(data.ticker); // Aquí se pondrá "SAN.MC" si buscas "Santander"
+            setTicker(data.ticker);
         } catch {
             setTicker(query.toUpperCase());
         }
         setSearchInput('');
-        setSelectedItem({ noticia: null, evento: null });
+        setSelectedItem({ noticia: null, evento: null, tweet: null });
     }
   };
 
   const aplicarMarcadores = (filtro) => {
-    const { candle, news, events } = dataRef.current;
+    const { candle, news, events, tweets } = dataRef.current;
     if (!seriesRef.current.candle || !seriesRef.current.volume || !candle.length) return;
 
     const candleMarkers = [];
@@ -73,33 +70,44 @@ function App() {
 
     const encontrarVela = (f) => candle.reduce((p, c) => (Math.abs(new Date(c.time) - new Date(f)) < Math.abs(new Date(p.time) - new Date(f)) ? c : p));
 
+    // EVENTOS MACRO (Abajo)
     if (Array.isArray(events)) {
         events.forEach(e => {
             const v = encontrarVela(e.fecha);
             if (v) {
-                if (!localMap[v.time]) localMap[v.time] = { noticia: null, evento: null };
+                if (!localMap[v.time]) localMap[v.time] = { noticia: null, evento: null, tweet: null };
                 localMap[v.time].evento = e;
                 volumeMarkers.push({ time: v.time, position: 'belowBar', color: e.color || '#FF9800', shape: 'square', text: 'E', size: 1 });
             }
         });
     }
 
+    // TWEETS SOCIALES (Arriba)
+    if (Array.isArray(tweets)) {
+        tweets.forEach(t => {
+            if (filtro === 'ALCISTA' && t.impacto !== 'Alcista') return;
+            if (filtro === 'BAJISTA' && t.impacto !== 'Bajista') return;
+            if (filtro === 'NEUTRAL' && t.impacto !== 'Neutral') return;
+            const v = encontrarVela(t.fecha);
+            if (v) {
+                if (!localMap[v.time]) localMap[v.time] = { noticia: null, evento: null, tweet: null };
+                if (!localMap[v.time].tweet) {
+                    localMap[v.time].tweet = t;
+                    candleMarkers.push({ time: v.time, position: 'aboveBar', color: t.color, shape: 'circle', text: 'T', size: 1 });
+                }
+            }
+        });
+    }
+
+    // NOTICIAS (Arriba)
     if (Array.isArray(news)) {
-        const noticiasPorFecha = {};
         news.forEach(n => {
             if (filtro === 'ALCISTA' && n.impacto !== 'Alcista') return;
             if (filtro === 'BAJISTA' && n.impacto !== 'Bajista') return;
             if (filtro === 'NEUTRAL' && n.impacto !== 'Neutral') return;
-            const fCorta = n.fecha.split(' ')[0];
-            if (!noticiasPorFecha[fCorta]) noticiasPorFecha[fCorta] = [];
-            noticiasPorFecha[fCorta].push(n);
-        });
-
-        Object.keys(noticiasPorFecha).forEach(fecha => {
-            const v = encontrarVela(fecha);
+            const v = encontrarVela(n.fecha);
             if (v) {
-                const n = noticiasPorFecha[fecha][0];
-                if (!localMap[v.time]) localMap[v.time] = { noticia: null, evento: null };
+                if (!localMap[v.time]) localMap[v.time] = { noticia: null, evento: null, tweet: null };
                 if (!localMap[v.time].noticia) {
                     localMap[v.time].noticia = n;
                     candleMarkers.push({ time: v.time, position: 'aboveBar', color: n.color, shape: 'circle', text: 'N', size: 1 });
@@ -108,6 +116,7 @@ function App() {
         });
     }
 
+    // MAX Y MIN
     let max = -Infinity, min = Infinity, maxTime, minTime;
     candle.forEach(d => {
         if (d.high > max) { max = d.high; maxTime = d.time; }
@@ -161,14 +170,16 @@ function App() {
         candleSeries.setData(candleData);
         volumeSeries.setData(candleData.map(d => ({ time: d.time, value: d.value || 0, color: d.close >= d.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)' })));
 
-        const [resN, resE, resInfo] = await Promise.all([
+        // Carga cuádruple: Noticias, Eventos, Info y TWEETS SOCIALES
+        const [resN, resE, resInfo, resT] = await Promise.all([
           fetch(`${RENDER_URL}/api/analisis/${ticker}`).then(r => r.json()),
           fetch(`${RENDER_URL}/api/eventos_macro`).then(r => r.json()),
-          fetch(`${RENDER_URL}/api/info/${ticker}`).then(r => r.json())
+          fetch(`${RENDER_URL}/api/info/${ticker}`).then(r => r.json()),
+          fetch(`${RENDER_URL}/api/social/${ticker}`).then(r => r.json())
         ]);
 
         if (isMounted) {
-            dataRef.current = { candle: candleData, news: resN, events: resE };
+            dataRef.current = { candle: candleData, news: resN, events: resE, tweets: resT };
             setTickerInfo(resInfo);
             aplicarMarcadores(newsFilter);
         }
@@ -185,7 +196,7 @@ function App() {
     chart.subscribeClick((p) => {
         const d = p.time ? (typeof p.time === 'string' ? p.time : `${p.time.year}-${String(p.time.month).padStart(2, '0')}-${String(p.time.day).padStart(2, '0')}`) : null;
         if (d && interactiveMapRef.current[d]) setSelectedItem(interactiveMapRef.current[d]);
-        else setSelectedItem({ noticia: null, evento: null });
+        else setSelectedItem({ noticia: null, evento: null, tweet: null });
     });
 
     chart.subscribeCrosshairMove((param) => {
@@ -196,16 +207,31 @@ function App() {
     return () => { isMounted = false; chart.remove(); };
   }, [ticker, timeframe]);
 
+  // Componentes de Tarjetas
   const PopupNoticia = ({ data, onClose }) => (
-    <div style={{ position: 'absolute', top: '40px', left: '20px', width: '300px', backgroundColor: '#1E222D', borderLeft: `4px solid ${data.color}`, padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}><div style={{ fontSize: '11px', color: '#787B86', display: 'flex', justifyContent: 'space-between' }}><span>📰 {data.fuente}</span><span style={{ cursor: 'pointer', padding: '0 5px' }} onClick={onClose}>✕</span></div><p style={{ fontWeight: 'bold', fontSize: '14px', margin: '10px 0', lineHeight: '1.4' }}>{data.titulo}</p><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px', borderTop: '1px solid #2B2B43', paddingTop: '10px' }}><span style={{ fontSize: '12px', fontWeight: 'bold', color: data.color, backgroundColor: 'rgba(255,255,255,0.05)', padding: '4px 8px', borderRadius: '4px' }}>Impacto: {data.impacto}</span><a href={data.url} target="_blank" rel="noreferrer" style={{ color: '#d1d4dc', textDecoration: 'none', fontSize: '12px', fontWeight: 'bold' }}>Leer ↗</a></div></div>
+    <div style={{ position: 'absolute', top: '50px', left: '20px', width: '300px', backgroundColor: '#1E222D', borderLeft: `4px solid ${data.color}`, padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}><div style={{ fontSize: '11px', color: '#787B86', display: 'flex', justifyContent: 'space-between' }}><span>📰 {data.fuente}</span><span style={{ cursor: 'pointer', padding: '0 5px' }} onClick={onClose}>✕</span></div><p style={{ fontWeight: 'bold', fontSize: '14px', margin: '10px 0', lineHeight: '1.4' }}>{data.titulo}</p><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px', borderTop: '1px solid #2B2B43', paddingTop: '10px' }}><span style={{ fontSize: '12px', fontWeight: 'bold', color: data.color, backgroundColor: 'rgba(255,255,255,0.05)', padding: '4px 8px', borderRadius: '4px' }}>Impacto: {data.impacto}</span><a href={data.url} target="_blank" rel="noreferrer" style={{ color: '#d1d4dc', textDecoration: 'none', fontSize: '12px', fontWeight: 'bold' }}>Leer ↗</a></div></div>
   );
+  
   const PopupEventoMacro = ({ data, onClose }) => (
     <div style={{ position: 'absolute', bottom: '20px', right: '20px', width: '280px', backgroundColor: '#2a1a1a', border: `1px solid ${data.color}`, borderRadius: '6px', padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}><div style={{ fontSize: '11px', color: '#FF9800', display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontWeight: 'bold' }}><span>⚠️ EVENTO MACRO (3 TOROS)</span><span style={{ cursor: 'pointer', padding: '0 5px', color: '#d1d4dc' }} onClick={onClose}>✕</span></div><p style={{ fontWeight: 'bold', fontSize: '15px', margin: '0 0 15px 0', color: 'white' }}>{data.titulo}</p><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '5px', textAlign: 'center', backgroundColor: 'rgba(0,0,0,0.3)', padding: '10px', borderRadius: '4px' }}><div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Actual</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: 'white' }}>{data.actual}</div></div><div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Prev</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: '#d1d4dc' }}>{data.prev}</div></div><div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Anterior</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: '#787B86' }}>{data.ant}</div></div></div></div>
   );
 
+  const PopupTweet = ({ data, onClose }) => (
+    <div style={{ position: 'absolute', top: '50px', right: '20px', width: '280px', backgroundColor: '#15202B', borderLeft: `4px solid ${data.color}`, borderRadius: '8px', padding: '15px', zIndex: 25, boxShadow: '0 10px 30px rgba(0,0,0,0.6)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+        <span style={{ color: '#1DA1F2', fontWeight: 'bold', fontSize: '13px' }}>💬 {data.usuario}</span>
+        <span style={{ cursor: 'pointer', color: '#787B86' }} onClick={onClose}>✕</span>
+      </div>
+      <p style={{ fontSize: '14px', color: 'white', lineHeight: '1.4', margin: '0 0 15px 0' }}>{data.texto}</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #38444d', paddingTop: '10px' }}>
+        <span style={{ fontSize: '11px', fontWeight: 'bold', color: data.color }}>SENTIMIENTO: {data.impacto.toUpperCase()}</span>
+        <a href={data.url} target="_blank" rel="noreferrer" style={{ color: '#1DA1F2', textDecoration: 'none', fontSize: '12px', fontWeight: 'bold' }}>Ver ↗</a>
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ backgroundColor: '#0c0d10', minHeight: '100vh', color: 'white', fontFamily: 'sans-serif', paddingBottom: '20px' }}>
-      
       <style>{`
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } } 
         .loader { border: 4px solid #1e222d; border-top: 4px solid #26a69a; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 15px; }
@@ -217,7 +243,6 @@ function App() {
         .skeleton { animation: pulse 1.5s infinite; background: #1E222D; border-radius: 8px; width: 100%; height: 100%; min-height: 200px; border: 1px solid #2B2B43;}
       `}</style>
 
-      {/* CINTA DE COTIZACIONES SUPERIOR */}
       {marketData.length > 0 && (
         <div className="ticker-tape">
           <div className="ticker-tape-content">
@@ -304,8 +329,9 @@ function App() {
               </div>
             )}
 
-            {selectedItem?.noticia && !isLoading && !chartError && <PopupNoticia data={selectedItem.noticia} onClose={() => setSelectedItem(prev => ({ ...prev, noticia: null }))} />}
-            {selectedItem?.evento && !isLoading && !chartError && <PopupEventoMacro data={selectedItem.evento} onClose={() => setSelectedItem(prev => ({ ...prev, evento: null }))} />}
+            {selectedItem?.noticia && <PopupNoticia data={selectedItem.noticia} onClose={() => setSelectedItem(prev => ({ ...prev, noticia: null }))} />}
+            {selectedItem?.tweet && <PopupTweet data={selectedItem.tweet} onClose={() => setSelectedItem(prev => ({ ...prev, tweet: null }))} />}
+            {selectedItem?.evento && <PopupEventoMacro data={selectedItem.evento} onClose={() => setSelectedItem(prev => ({ ...prev, evento: null }))} />}
           </div>
         </div>
 
