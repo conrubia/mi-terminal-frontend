@@ -47,7 +47,7 @@ const PanelNoticiasGlobales = ({ renderUrl }) => {
   );
 };
 
-// --- NUEVO PANEL: TRÁFICO MARÍTIMO MUNDIAL ---
+// --- PANEL: TRÁFICO MARÍTIMO MUNDIAL ---
 const MapaMaritimo = () => (
   <div style={{ marginTop: '20px', border: '1px solid #2B2B43', borderRadius: '8px', overflow: 'hidden', backgroundColor: '#131722', height: '600px', display: 'flex', flexDirection: 'column' }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #2B2B43', padding: '15px' }}>
@@ -57,16 +57,7 @@ const MapaMaritimo = () => (
         <span style={{ fontSize: '10px', color: '#787B86', backgroundColor: 'rgba(255,255,255,0.05)', padding: '3px 6px', borderRadius: '4px' }}>AIS SATÉLITE EN DIRECTO</span>
     </div>
     <div style={{ flex: 1, width: '100%' }}>
-      {/* Hemos corregido el 100% por 100%25 en la URL para evitar errores de sintaxis */}
-      <iframe
-        name="vesselfinder"
-        id="vesselfinder"
-        width="100%"
-        height="100%"
-        frameBorder="0"
-        src="https://www.vesselfinder.com/aismap?zoom=3&lat=25&lon=0&width=100%25&height=100%25&names=false&mmsi=0&track=false&fleet=false&fleet_name=false&fleet_hide_unnamed=false&clicktoact=false&store_pos=true"
-        style={{ display: 'block' }}
-      ></iframe>
+      <iframe name="vesselfinder" id="vesselfinder" width="100%" height="100%" frameBorder="0" src="https://www.vesselfinder.com/aismap?zoom=3&lat=25&lon=0&width=100%25&height=100%25&names=false&mmsi=0&track=false&fleet=false&fleet_name=false&fleet_hide_unnamed=false&clicktoact=false&store_pos=true" style={{ display: 'block' }}></iframe>
     </div>
   </div>
 );
@@ -81,7 +72,8 @@ function App() {
   const [ticker, setTicker] = useState(() => new URLSearchParams(window.location.search).get('ticker') || 'AAPL');
   const [timeframe, setTimeframe] = useState('1Y');
   
-  const [selectedItem, setSelectedItem] = useState({ noticias: [], tweets: [], evento: null }); 
+  // Añadimos 'patron' al estado inicial
+  const [selectedItem, setSelectedItem] = useState({ noticias: [], tweets: [], evento: null, patron: null }); 
   const [isLoading, setIsLoading] = useState(true);
   const [chartError, setChartError] = useState(null);
   const [searchInput, setSearchInput] = useState('');
@@ -89,7 +81,10 @@ function App() {
   const [marketData, setMarketData] = useState([]);
   const [tickerInfo, setTickerInfo] = useState(null);
   const [favorites, setFavorites] = useState(() => JSON.parse(localStorage.getItem('terminal_favs')) || ['AAPL', 'MSFT', 'TSLA', 'BTC-USD']);
+  
   const [newsFilter, setNewsFilter] = useState('ALL');
+  // NUEVO ESTADO: Interruptor para encender/apagar el escáner de patrones
+  const [showPatterns, setShowPatterns] = useState(false);
   const [crosshairData, setCrosshairData] = useState(null);
 
   // ⚠️ PON TU URL DE RENDER AQUÍ
@@ -124,11 +119,11 @@ function App() {
             setTicker(query.toUpperCase());
         }
         setSearchInput('');
-        setSelectedItem({ noticias: [], tweets: [], evento: null });
+        setSelectedItem({ noticias: [], tweets: [], evento: null, patron: null });
     }
   };
 
-  const aplicarMarcadores = (filtro) => {
+  const aplicarMarcadores = (filtro, showPat) => {
     const { candle, news, events, tweets } = dataRef.current;
     if (!seriesRef.current.candle || !seriesRef.current.volume || !candle.length) return;
 
@@ -141,15 +136,15 @@ function App() {
     const registrarEnMapa = (fechaStr, tipo, item) => {
         const v = encontrarVela(fechaStr);
         if (!v) return;
-        if (!localMap[v.time]) localMap[v.time] = { noticias: [], tweets: [], evento: null };
+        if (!localMap[v.time]) localMap[v.time] = { noticias: [], tweets: [], evento: null, patron: null };
         
         if (tipo === 'noticia') localMap[v.time].noticias.push(item);
         if (tipo === 'tweet') localMap[v.time].tweets.push(item);
         if (tipo === 'evento') localMap[v.time].evento = item;
     };
 
+    // 1. Registrar Datos Externos
     if (Array.isArray(events)) events.forEach(e => registrarEnMapa(e.fecha, 'evento', e));
-    
     if (Array.isArray(tweets)) {
         tweets.forEach(t => {
             if (filtro === 'ALCISTA' && t.impacto !== 'Alcista') return;
@@ -158,7 +153,6 @@ function App() {
             registrarEnMapa(t.fecha, 'tweet', t);
         });
     }
-
     if (Array.isArray(news)) {
         news.forEach(n => {
             if (filtro === 'ALCISTA' && n.impacto !== 'Alcista') return;
@@ -168,11 +162,64 @@ function App() {
         });
     }
 
+    // 2. ESCÁNER MATEMÁTICO DE PATRONES (Solo si está activado)
+    if (showPat) {
+        for (let i = 1; i < candle.length; i++) {
+            const prev = candle[i-1];
+            const curr = candle[i];
+            
+            const body = Math.abs(curr.open - curr.close);
+            const range = curr.high - curr.low;
+            const prevBody = Math.abs(prev.open - prev.close);
+
+            let patron = null;
+
+            // Doji (Indecisión - Cuerpo menor al 10% del rango total)
+            if (range > 0 && body <= range * 0.1) {
+                patron = { nombre: 'Doji', tipo: 'Indecisión', desc: 'Apertura y cierre casi idénticos. Indica una fuerte indecisión o posible giro de tendencia.', color: '#FFD700', shape: 'circle', text: 'D' };
+            } 
+            else {
+                const lowerShadow = Math.min(curr.open, curr.close) - curr.low;
+                const upperShadow = curr.high - Math.max(curr.open, curr.close);
+
+                // Martillo Alcista
+                if (lowerShadow >= 2 * body && upperShadow <= body * 0.2 && curr.close > curr.open) {
+                    patron = { nombre: 'Martillo Alcista', tipo: 'Alcista', desc: 'Fuerte rechazo a la baja. Los compradores tomaron el control agresivamente.', color: '#26a69a', shape: 'arrowUp', text: 'M' };
+                }
+                // Envolvente Alcista
+                else if (prev.close < prev.open && curr.close > curr.open && curr.close >= prev.open && curr.open <= prev.close && body > prevBody) {
+                    patron = { nombre: 'Envolvente Alcista', tipo: 'Alcista', desc: 'Vela de gran convicción compradora que anula por completo la caída del día anterior.', color: '#26a69a', shape: 'arrowUp', text: 'EA' };
+                }
+                // Envolvente Bajista
+                else if (prev.close > prev.open && curr.close < curr.open && curr.close <= prev.open && curr.open >= prev.close && body > prevBody) {
+                    patron = { nombre: 'Envolvente Bajista', tipo: 'Bajista', desc: 'Los vendedores anulan todas las ganancias del día anterior. Fuerte señal de caída.', color: '#ef5350', shape: 'arrowDown', text: 'EB' };
+                }
+            }
+
+            if (patron) {
+                if (!localMap[curr.time]) localMap[curr.time] = { noticias: [], tweets: [], evento: null, patron: null };
+                localMap[curr.time].patron = patron;
+                candleMarkers.push({
+                    time: curr.time,
+                    position: patron.tipo === 'Bajista' ? 'aboveBar' : (patron.tipo === 'Alcista' ? 'belowBar' : 'aboveBar'),
+                    color: patron.color,
+                    shape: patron.shape,
+                    text: patron.text,
+                    size: 1
+                });
+            }
+        }
+    }
+
+    // 3. Procesar para dibujar
     Object.keys(localMap).forEach(fecha => {
         const d = localMap[fecha];
         if (d.evento) volumeMarkers.push({ time: fecha, position: 'belowBar', color: d.evento.color, shape: 'square', text: 'E', size: 1 });
-        if (d.noticias.length > 0) candleMarkers.push({ time: fecha, position: 'aboveBar', color: d.noticias[0].color, shape: 'circle', text: d.noticias.length > 1 ? `N${d.noticias.length}` : 'N', size: 1 });
-        if (d.tweets.length > 0) candleMarkers.push({ time: fecha, position: 'aboveBar', color: '#1DA1F2', shape: 'circle', text: d.tweets.length > 1 ? `T${d.tweets.length}` : 'T', size: 1 });
+        // Solo dibujamos marcadores de noticias/tweets si en esa vela NO hay un patrón geométrico dibujado (para evitar superposición visual)
+        if (!d.patron) {
+            if (d.noticias.length > 0) candleMarkers.push({ time: fecha, position: 'aboveBar', color: d.noticias[0].color, shape: 'circle', text: d.noticias.length > 1 ? `N${d.noticias.length}` : 'N', size: 1 });
+            else if (d.tweets.length > 0) candleMarkers.push({ time: fecha, position: 'aboveBar', color: '#1DA1F2', shape: 'circle', text: d.tweets.length > 1 ? `T${d.tweets.length}` : 'T', size: 1 });
+        }
     });
 
     let max = -Infinity, min = Infinity, maxTime, minTime;
@@ -180,8 +227,8 @@ function App() {
         if (d.high > max) { max = d.high; maxTime = d.time; }
         if (d.low < min) { min = d.low; minTime = d.time; }
     });
-    if (maxTime) candleMarkers.push({ time: maxTime, position: 'aboveBar', color: '#787B86', shape: 'arrowDown', text: `Máx ${max.toFixed(2)}`, size: 1 });
-    if (minTime) candleMarkers.push({ time: minTime, position: 'belowBar', color: '#787B86', shape: 'arrowUp', text: `Mín ${min.toFixed(2)}`, size: 1 });
+    if (maxTime) candleMarkers.push({ time: maxTime, position: 'aboveBar', color: '#787B86', shape: 'arrowDown', text: `Máx`, size: 1 });
+    if (minTime) candleMarkers.push({ time: minTime, position: 'belowBar', color: '#787B86', shape: 'arrowUp', text: `Mín`, size: 1 });
 
     interactiveMapRef.current = localMap;
     candleMarkers.sort((a, b) => new Date(a.time) - new Date(b.time));
@@ -190,7 +237,7 @@ function App() {
     createSeriesMarkers(seriesRef.current.volume, volumeMarkers);
   };
 
-  useEffect(() => { aplicarMarcadores(newsFilter); }, [newsFilter]);
+  useEffect(() => { aplicarMarcadores(newsFilter, showPatterns); }, [newsFilter, showPatterns]);
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
@@ -238,7 +285,7 @@ function App() {
         if (isMounted) {
             dataRef.current = { candle: candleData, news: resN, events: resE, tweets: resT };
             setTickerInfo(resInfo);
-            aplicarMarcadores(newsFilter);
+            aplicarMarcadores(newsFilter, showPatterns);
         }
         chart.timeScale().fitContent();
       } catch (e) { 
@@ -253,7 +300,7 @@ function App() {
     chart.subscribeClick((p) => {
         const d = p.time ? (typeof p.time === 'string' ? p.time : `${p.time.year}-${String(p.time.month).padStart(2, '0')}-${String(p.time.day).padStart(2, '0')}`) : null;
         if (d && interactiveMapRef.current[d]) setSelectedItem(interactiveMapRef.current[d]);
-        else setSelectedItem({ noticias: [], tweets: [], evento: null });
+        else setSelectedItem({ noticias: [], tweets: [], evento: null, patron: null });
     });
 
     chart.subscribeCrosshairMove((param) => {
@@ -307,6 +354,19 @@ function App() {
     <div style={{ position: 'absolute', bottom: '20px', right: '20px', width: '280px', backgroundColor: '#2a1a1a', border: `1px solid ${data.color}`, borderRadius: '6px', padding: '15px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}><div style={{ fontSize: '11px', color: '#FF9800', display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontWeight: 'bold' }}><span>⚠️ EVENTO MACRO (3 TOROS)</span><span style={{ cursor: 'pointer', padding: '0 5px', color: '#d1d4dc' }} onClick={onClose}>✕</span></div><p style={{ fontWeight: 'bold', fontSize: '15px', margin: '0 0 15px 0', color: 'white' }}>{data.titulo}</p><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '5px', textAlign: 'center', backgroundColor: 'rgba(0,0,0,0.3)', padding: '10px', borderRadius: '4px' }}><div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Actual</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: 'white' }}>{data.actual}</div></div><div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Prev</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: '#d1d4dc' }}>{data.prev}</div></div><div><div style={{ fontSize: '10px', color: '#787B86', textTransform: 'uppercase' }}>Anterior</div><div style={{ fontSize: '14px', fontWeight: 'bold', color: '#787B86' }}>{data.ant}</div></div></div></div>
   );
 
+  // NUEVO: Popup para Patrones Técnicos
+  const PopupPatron = ({ data, onClose }) => (
+    <div style={{ position: 'absolute', top: '20px', left: '50%', transform: 'translateX(-50%)', width: '300px', backgroundColor: '#1E222D', borderTop: `4px solid ${data.color}`, borderRadius: '8px', padding: '15px', zIndex: 30, boxShadow: '0 10px 30px rgba(0,0,0,0.8)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+        <span style={{ fontWeight: 'bold', color: data.color, fontSize: '14px' }}>
+          {data.shape === 'arrowUp' ? '↗' : data.shape === 'arrowDown' ? '↘' : '⏸'} PATRÓN: {data.nombre.toUpperCase()}
+        </span>
+        <span style={{ cursor: 'pointer', color: '#787B86' }} onClick={onClose}>✕</span>
+      </div>
+      <p style={{ fontSize: '13px', color: '#d1d4dc', lineHeight: '1.4', margin: '0' }}>{data.desc}</p>
+    </div>
+  );
+
   return (
     <div style={{ backgroundColor: '#0c0d10', minHeight: '100vh', color: 'white', fontFamily: 'sans-serif', paddingBottom: '20px' }}>
       <style>{`
@@ -338,7 +398,7 @@ function App() {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '20px', maxWidth: '1400px', margin: '0 auto', alignItems: 'stretch', padding: '0 20px' }}>
         
-        {/* COLUMNA IZQUIERDA (Gráfico + Mapa) */}
+        {/* COLUMNA IZQUIERDA */}
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '15px' }}>
@@ -379,15 +439,23 @@ function App() {
               ))}
             </div>
             
-            <div style={{ display: 'flex', gap: '5px', fontSize: '12px' }}>
-              <span style={{ color: '#787B86', alignSelf: 'center', marginRight: '5px', fontWeight: 'bold' }}>FILTRO IA:</span>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '12px' }}>
+              {/* BOTÓN MÁGICO DE ESCANEO DE PATRONES */}
+              <button 
+                onClick={() => setShowPatterns(!showPatterns)} 
+                style={{ padding: '5px 12px', backgroundColor: showPatterns ? '#FF9800' : 'rgba(255,152,0,0.1)', color: showPatterns ? 'black' : '#FF9800', border: '1px solid #FF9800', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.3s' }}>
+                {showPatterns ? '✖ Ocultar Patrones' : '🔍 Escanear Patrones'}
+              </button>
+
+              <div style={{ width: '1px', height: '20px', backgroundColor: '#2B2B43', margin: '0 5px' }}></div>
+
+              <span style={{ color: '#787B86', fontWeight: 'bold' }}>IA:</span>
               {['ALL', 'ALCISTA', 'BAJISTA', 'NEUTRAL'].map(f => (
                 <button key={f} onClick={() => setNewsFilter(f)} style={{ padding: '4px 10px', backgroundColor: newsFilter === f ? '#2962FF' : 'rgba(255,255,255,0.05)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{f}</button>
               ))}
             </div>
           </div>
 
-          {/* EL GRÁFICO PRINCIPAL */}
           <div style={{ position: 'relative', border: '1px solid #2B2B43', borderRadius: '8px', overflow: 'hidden', flexGrow: 1, minHeight: '600px', backgroundColor: '#131722' }}>
             
             {crosshairData && (
@@ -413,21 +481,20 @@ function App() {
               </div>
             )}
 
-            {selectedItem?.noticias?.length > 0 && <PopupNoticias items={selectedItem.noticias} onClose={() => setSelectedItem(prev => ({ ...prev, noticias: [] }))} />}
-            {selectedItem?.tweets?.length > 0 && <PopupTweets items={selectedItem.tweets} onClose={() => setSelectedItem(prev => ({ ...prev, tweets: [] }))} />}
+            {/* RENDERIZADO DE POPUPS INCLUYENDO EL NUEVO PATRÓN */}
+            {selectedItem?.patron && <PopupPatron data={selectedItem.patron} onClose={() => setSelectedItem(prev => ({ ...prev, patron: null }))} />}
+            {!selectedItem?.patron && selectedItem?.noticias?.length > 0 && <PopupNoticias items={selectedItem.noticias} onClose={() => setSelectedItem(prev => ({ ...prev, noticias: [] }))} />}
+            {!selectedItem?.patron && selectedItem?.tweets?.length > 0 && <PopupTweets items={selectedItem.tweets} onClose={() => setSelectedItem(prev => ({ ...prev, tweets: [] }))} />}
             {selectedItem?.evento && <PopupEventoMacro data={selectedItem.evento} onClose={() => setSelectedItem(prev => ({ ...prev, evento: null }))} />}
           </div>
 
-          {/* NUESTRO NUEVO MAPA MARÍTIMO DEBAJO DEL GRÁFICO */}
           <MapaMaritimo />
 
         </div>
 
-        {/* COLUMNA DERECHA: PANELES DE INFORMACIÓN */}
+        {/* COLUMNA DERECHA */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          
           <PanelNoticiasGlobales renderUrl={RENDER_URL} />
-
           {isLoading ? <div className="skeleton" style={{ flex: 1 }}></div> : <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px', overflow: 'hidden' }}><EconomicCalendar /></div>}
           {isLoading ? <div className="skeleton" style={{ flex: 1 }}></div> : <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px', overflow: 'hidden' }}><FearAndGreed /></div>}
         </div>
