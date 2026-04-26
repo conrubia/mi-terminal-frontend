@@ -3,6 +3,50 @@ import { createChart, CandlestickSeries, HistogramSeries, createSeriesMarkers } 
 import EconomicCalendar from "./EconomicCalendar";
 import FearAndGreed from "./FearAndGreed";
 
+// --- PANEL DE ÚLTIMA HORA GLOBAL (Componente Externo) ---
+const PanelNoticiasGlobales = ({ renderUrl }) => {
+  const [news, setNews] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchGlobalNews = () => {
+      fetch(`${renderUrl}/api/noticias_generales`)
+        .then(r => r.json())
+        .then(d => { setNews(d); setLoading(false); })
+        .catch(() => setLoading(false));
+    };
+    fetchGlobalNews();
+    const interval = setInterval(fetchGlobalNews, 300000); // Refresco automático cada 5 min
+    return () => clearInterval(interval);
+  }, [renderUrl]);
+
+  if (loading) return <div className="skeleton" style={{ flex: 1, minHeight: '350px' }}></div>;
+
+  return (
+    <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px', display: 'flex', flexDirection: 'column', maxHeight: '400px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #2B2B43', paddingBottom: '10px', marginBottom: '15px' }}>
+        <h3 style={{ margin: 0, fontSize: '16px', color: 'white', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ color: '#ef5350' }}>🔴</span> Última Hora
+        </h3>
+        <span style={{ fontSize: '10px', color: '#787B86', backgroundColor: 'rgba(255,255,255,0.05)', padding: '3px 6px', borderRadius: '4px' }}>EN DIRECTO</span>
+      </div>
+      <div style={{ overflowY: 'auto', flex: 1, paddingRight: '5px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {news.map((n, i) => (
+          <div key={i} style={{ borderLeft: `3px solid ${n.color}`, paddingLeft: '10px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#787B86', marginBottom: '4px' }}>
+              <span style={{ fontWeight: 'bold', color: '#d1d4dc' }}>{n.fuente}</span>
+              <span>{n.hora}</span>
+            </div>
+            <a href={n.url} target="_blank" rel="noreferrer" style={{ display: 'block', fontSize: '13px', color: 'white', textDecoration: 'none', lineHeight: '1.4' }}>
+              {n.titulo}
+            </a>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 function App() {
   const chartContainerRef = useRef(null);
   const chartInstance = useRef(null); 
@@ -13,7 +57,6 @@ function App() {
   const [ticker, setTicker] = useState(() => new URLSearchParams(window.location.search).get('ticker') || 'AAPL');
   const [timeframe, setTimeframe] = useState('1Y');
   
-  // Ahora selectedItem almacena ARRAYS para poder agrupar múltiples eventos en un mismo día
   const [selectedItem, setSelectedItem] = useState({ noticias: [], tweets: [], evento: null }); 
   const [isLoading, setIsLoading] = useState(true);
   const [chartError, setChartError] = useState(null);
@@ -67,7 +110,7 @@ function App() {
 
     const candleMarkers = [];
     const volumeMarkers = [];
-    const localMap = {}; // { fecha: { noticias: [], tweets: [], evento: null } }
+    const localMap = {}; 
 
     const encontrarVela = (f) => candle.reduce((p, c) => (Math.abs(new Date(c.time) - new Date(f)) < Math.abs(new Date(p.time) - new Date(f)) ? c : p));
 
@@ -81,12 +124,8 @@ function App() {
         if (tipo === 'evento') localMap[v.time].evento = item;
     };
 
-    // Registrar Eventos Macro
-    if (Array.isArray(events)) {
-        events.forEach(e => registrarEnMapa(e.fecha, 'evento', e));
-    }
-
-    // Registrar Tweets
+    if (Array.isArray(events)) events.forEach(e => registrarEnMapa(e.fecha, 'evento', e));
+    
     if (Array.isArray(tweets)) {
         tweets.forEach(t => {
             if (filtro === 'ALCISTA' && t.impacto !== 'Alcista') return;
@@ -96,7 +135,6 @@ function App() {
         });
     }
 
-    // Registrar Noticias
     if (Array.isArray(news)) {
         news.forEach(n => {
             if (filtro === 'ALCISTA' && n.impacto !== 'Alcista') return;
@@ -106,28 +144,13 @@ function App() {
         });
     }
 
-    // Generar Marcadores desde el Mapa Agrupado
     Object.keys(localMap).forEach(fecha => {
         const d = localMap[fecha];
-        
-        if (d.evento) {
-            volumeMarkers.push({ time: fecha, position: 'belowBar', color: d.evento.color, shape: 'square', text: 'E', size: 1 });
-        }
-        if (d.noticias.length > 0) {
-            candleMarkers.push({ 
-                time: fecha, position: 'aboveBar', color: d.noticias[0].color, shape: 'circle', 
-                text: d.noticias.length > 1 ? `N${d.noticias.length}` : 'N', size: 1 
-            });
-        }
-        if (d.tweets.length > 0) {
-            candleMarkers.push({ 
-                time: fecha, position: 'aboveBar', color: '#1DA1F2', shape: 'circle', 
-                text: d.tweets.length > 1 ? `T${d.tweets.length}` : 'T', size: 1 
-            });
-        }
+        if (d.evento) volumeMarkers.push({ time: fecha, position: 'belowBar', color: d.evento.color, shape: 'square', text: 'E', size: 1 });
+        if (d.noticias.length > 0) candleMarkers.push({ time: fecha, position: 'aboveBar', color: d.noticias[0].color, shape: 'circle', text: d.noticias.length > 1 ? `N${d.noticias.length}` : 'N', size: 1 });
+        if (d.tweets.length > 0) candleMarkers.push({ time: fecha, position: 'aboveBar', color: '#1DA1F2', shape: 'circle', text: d.tweets.length > 1 ? `T${d.tweets.length}` : 'T', size: 1 });
     });
 
-    // Etiquetas MÁX y MÍN
     let max = -Infinity, min = Infinity, maxTime, minTime;
     candle.forEach(d => {
         if (d.high > max) { max = d.high; maxTime = d.time; }
@@ -217,7 +240,7 @@ function App() {
     return () => { isMounted = false; chart.remove(); };
   }, [ticker, timeframe]);
 
-  // --- COMPONENTES DE TARJETAS (Ahora soportan múltiples items con Scroll) ---
+  // --- COMPONENTES DE TARJETAS ---
   const PopupNoticias = ({ items, onClose }) => (
     <div style={{ position: 'absolute', top: '50px', left: '20px', width: '320px', maxHeight: '400px', overflowY: 'auto', backgroundColor: '#1E222D', borderRadius: '8px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.6)', padding: '10px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', padding: '0 5px 10px', borderBottom: '1px solid #2B2B43' }}>
@@ -271,7 +294,6 @@ function App() {
         @keyframes scroll { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
         @keyframes pulse { 0% {opacity: 0.5;} 50% {opacity: 1;} 100% {opacity: 0.5;} }
         .skeleton { animation: pulse 1.5s infinite; background: #1E222D; border-radius: 8px; width: 100%; height: 100%; min-height: 200px; border: 1px solid #2B2B43;}
-        /* Estilos para el scroll de los popups */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #38444d; border-radius: 4px; }
@@ -364,14 +386,17 @@ function App() {
               </div>
             )}
 
-            {/* Renderizado condicional de los Popups Scrollables */}
             {selectedItem?.noticias?.length > 0 && <PopupNoticias items={selectedItem.noticias} onClose={() => setSelectedItem(prev => ({ ...prev, noticias: [] }))} />}
             {selectedItem?.tweets?.length > 0 && <PopupTweets items={selectedItem.tweets} onClose={() => setSelectedItem(prev => ({ ...prev, tweets: [] }))} />}
             {selectedItem?.evento && <PopupEventoMacro data={selectedItem.evento} onClose={() => setSelectedItem(prev => ({ ...prev, evento: null }))} />}
           </div>
         </div>
 
+        {/* COLUMNA DERECHA: PANELES DE INFORMACIÓN */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          
+          <PanelNoticiasGlobales renderUrl={RENDER_URL} />
+
           {isLoading ? <div className="skeleton" style={{ flex: 1 }}></div> : <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px', overflow: 'hidden' }}><EconomicCalendar /></div>}
           {isLoading ? <div className="skeleton" style={{ flex: 1 }}></div> : <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px', overflow: 'hidden' }}><FearAndGreed /></div>}
         </div>
