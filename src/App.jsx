@@ -3,7 +3,7 @@ import { createChart, CandlestickSeries, HistogramSeries, createSeriesMarkers } 
 import EconomicCalendar from "./EconomicCalendar";
 import FearAndGreed from "./FearAndGreed";
 
-// --- PANEL DE ÚLTIMA HORA GLOBAL (Componente Externo) ---
+// --- PANEL DE ÚLTIMA HORA GLOBAL ---
 const PanelNoticiasGlobales = ({ renderUrl }) => {
   const [news, setNews] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -16,7 +16,7 @@ const PanelNoticiasGlobales = ({ renderUrl }) => {
         .catch(() => setLoading(false));
     };
     fetchGlobalNews();
-    const interval = setInterval(fetchGlobalNews, 300000); // Refresco automático cada 5 min
+    const interval = setInterval(fetchGlobalNews, 300000); 
     return () => clearInterval(interval);
   }, [renderUrl]);
 
@@ -46,6 +46,30 @@ const PanelNoticiasGlobales = ({ renderUrl }) => {
     </div>
   );
 };
+
+// --- NUEVO PANEL: TRÁFICO MARÍTIMO MUNDIAL ---
+const MapaMaritimo = () => (
+  <div style={{ marginTop: '20px', border: '1px solid #2B2B43', borderRadius: '8px', overflow: 'hidden', backgroundColor: '#131722', height: '600px', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #2B2B43', padding: '15px' }}>
+        <h3 style={{ margin: 0, fontSize: '16px', color: 'white', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          🚢 Tráfico Marítimo Global
+        </h3>
+        <span style={{ fontSize: '10px', color: '#787B86', backgroundColor: 'rgba(255,255,255,0.05)', padding: '3px 6px', borderRadius: '4px' }}>AIS SATÉLITE EN DIRECTO</span>
+    </div>
+    <div style={{ flex: 1, width: '100%' }}>
+      {/* Usamos el iframe oficial de VesselFinder para tener el mapa mundial gratis */}
+      <iframe
+        name="vesselfinder"
+        id="vesselfinder"
+        width="100%"
+        height="100%"
+        frameBorder="0"
+        src="https://www.vesselfinder.com/aismap?zoom=3&lat=25&lon=0&width=100%&height=100%&names=false&mmsi=0&track=false&fleet=false&fleet_name=false&fleet_hide_unnamed=false&clicktoact=false&store_pos=true"
+        style={{ display: 'block' }}
+      ></iframe>
+    </div>
+  </div>
+);
 
 function App() {
   const chartContainerRef = useRef(null);
@@ -313,6 +337,8 @@ function App() {
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '20px', maxWidth: '1400px', margin: '0 auto', alignItems: 'stretch', padding: '0 20px' }}>
+        
+        {/* COLUMNA IZQUIERDA (Gráfico + Mapa) */}
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '15px' }}>
@@ -361,6 +387,7 @@ function App() {
             </div>
           </div>
 
+          {/* EL GRÁFICO PRINCIPAL */}
           <div style={{ position: 'relative', border: '1px solid #2B2B43', borderRadius: '8px', overflow: 'hidden', flexGrow: 1, minHeight: '600px', backgroundColor: '#131722' }}>
             
             {crosshairData && (
@@ -390,6 +417,10 @@ function App() {
             {selectedItem?.tweets?.length > 0 && <PopupTweets items={selectedItem.tweets} onClose={() => setSelectedItem(prev => ({ ...prev, tweets: [] }))} />}
             {selectedItem?.evento && <PopupEventoMacro data={selectedItem.evento} onClose={() => setSelectedItem(prev => ({ ...prev, evento: null }))} />}
           </div>
+
+          {/* NUESTRO NUEVO MAPA MARÍTIMO DEBAJO DEL GRÁFICO */}
+          <MapaMaritimo />
+
         </div>
 
         {/* COLUMNA DERECHA: PANELES DE INFORMACIÓN */}
