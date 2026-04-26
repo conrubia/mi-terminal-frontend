@@ -62,6 +62,50 @@ const MapaMaritimo = () => (
   </div>
 );
 
+// --- NUEVO PANEL: SALUD FUNDAMENTAL ---
+const PanelSaludFundamental = ({ data, isLoading }) => {
+  if (isLoading) return <div className="skeleton" style={{ flex: 1, minHeight: '200px' }}></div>;
+  if (!data) return null;
+
+  return (
+    <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #2B2B43', paddingBottom: '10px', marginBottom: '15px' }}>
+        <h3 style={{ margin: 0, fontSize: '16px', color: 'white', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          🏥 Salud Fundamental
+        </h3>
+      </div>
+      
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+        <div>
+          <div style={{ fontSize: '11px', color: '#787B86', textTransform: 'uppercase' }}>Market Cap</div>
+          <div style={{ fontSize: '15px', fontWeight: 'bold', color: 'white' }}>{data.market_cap}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '11px', color: '#787B86', textTransform: 'uppercase' }}>PER (P/E Ratio)</div>
+          <div style={{ fontSize: '15px', fontWeight: 'bold', color: 'white' }}>{data.per}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '11px', color: '#787B86', textTransform: 'uppercase' }}>Beneficio Acción (EPS)</div>
+          <div style={{ fontSize: '15px', fontWeight: 'bold', color: 'white' }}>{data.eps !== 'N/A' ? `$${data.eps}` : 'N/A'}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '11px', color: '#787B86', textTransform: 'uppercase' }}>Dividendo</div>
+          <div style={{ fontSize: '15px', fontWeight: 'bold', color: 'white' }}>{data.dividendo}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '11px', color: '#787B86', textTransform: 'uppercase' }}>Máximo 52 Sem.</div>
+          <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#26a69a' }}>{data.high_52w !== 'N/A' ? `$${data.high_52w}` : 'N/A'}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '11px', color: '#787B86', textTransform: 'uppercase' }}>Mínimo 52 Sem.</div>
+          <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#ef5350' }}>{data.low_52w !== 'N/A' ? `$${data.low_52w}` : 'N/A'}</div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
 function App() {
   const chartContainerRef = useRef(null);
   const chartInstance = useRef(null); 
@@ -128,7 +172,6 @@ function App() {
     const { candle, news, events, tweets } = dataRef.current;
     if (!seriesRef.current.candle || !seriesRef.current.volume || !candle.length) return;
     
-    // Si los plugins de marcadores aún no están creados, salimos
     if (!seriesRef.current.candleMarkers || !seriesRef.current.volumeMarkers) return;
 
     const candleMarkers = [];
@@ -235,7 +278,6 @@ function App() {
     candleMarkers.sort((a, b) => new Date(a.time) - new Date(b.time));
     volumeMarkers.sort((a, b) => new Date(a.time) - new Date(b.time));
     
-    // --- NUEVA ARQUITECTURA V5: Actualizamos usando el plugin de marcadores ---
     seriesRef.current.candleMarkers.setMarkers(candleMarkers);
     seriesRef.current.volumeMarkers.setMarkers(volumeMarkers);
   };
@@ -259,14 +301,12 @@ function App() {
     });
     chartInstance.current = chart;
 
-    // --- NUEVA ARQUITECTURA V5: Sintaxis correcta para crear series ---
     const candleSeries = chart.addSeries(CandlestickSeries, { upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350' });
     candleSeries.applyOptions({ lastValueVisible: true, priceLineVisible: true });
 
     const volumeSeries = chart.addSeries(HistogramSeries, { color: '#26a69a', priceFormat: { type: 'volume' }, priceScaleId: '' });
     volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
 
-    // --- NUEVA ARQUITECTURA V5: Los marcadores se instancian como plugins independientes ---
     const candleMarkersPlugin = createSeriesMarkers(candleSeries);
     const volumeMarkersPlugin = createSeriesMarkers(volumeSeries);
 
@@ -324,14 +364,12 @@ function App() {
     return () => { isMounted = false; chart.remove(); };
   }, [ticker, timeframe]);
 
-  // --- BOTÓN REUTILIZABLE PARA LAS CAPAS ---
   const ToggleButton = ({ label, active, onClick, color }) => (
     <button onClick={onClick} style={{ padding: '4px 8px', backgroundColor: active ? `${color}20` : 'transparent', color: active ? color : '#787B86', border: `1px solid ${active ? color : '#2B2B43'}`, borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '11px', transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: '4px' }}>
       {label}
     </button>
   );
 
-  // --- COMPONENTES DE TARJETAS ---
   const PopupNoticias = ({ items, onClose }) => (
     <div style={{ position: 'absolute', top: '50px', left: '20px', width: '320px', maxHeight: '400px', overflowY: 'auto', backgroundColor: '#1E222D', borderRadius: '8px', zIndex: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.6)', padding: '10px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', padding: '0 5px 10px', borderBottom: '1px solid #2B2B43' }}>
@@ -517,6 +555,7 @@ function App() {
         {/* COLUMNA DERECHA */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <PanelNoticiasGlobales renderUrl={RENDER_URL} />
+          <PanelSaludFundamental data={tickerInfo} isLoading={isLoading} />
           {isLoading ? <div className="skeleton" style={{ flex: 1 }}></div> : <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px', overflow: 'hidden' }}><EconomicCalendar /></div>}
           {isLoading ? <div className="skeleton" style={{ flex: 1 }}></div> : <div style={{ flex: 1, backgroundColor: '#131722', borderRadius: '8px', border: '1px solid #2B2B43', padding: '15px', overflow: 'hidden' }}><FearAndGreed /></div>}
         </div>
