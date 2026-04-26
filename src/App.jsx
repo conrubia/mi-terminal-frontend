@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { createChart, CandlestickSeries, HistogramSeries, createSeriesMarkers } from 'lightweight-charts';
+import { createChart, CandlestickSeries, HistogramSeries } from 'lightweight-charts';
 import EconomicCalendar from "./EconomicCalendar";
 import FearAndGreed from "./FearAndGreed";
 
@@ -82,7 +82,7 @@ function App() {
   const [newsFilter, setNewsFilter] = useState('ALL');
   const [crosshairData, setCrosshairData] = useState(null);
 
-  // --- NUEVOS ESTADOS: GESTOR DE CAPAS (Todo encendido por defecto excepto los patrones) ---
+  // --- ESTADOS: GESTOR DE CAPAS ---
   const [showNews, setShowNews] = useState(true);
   const [showTweets, setShowTweets] = useState(true);
   const [showEvents, setShowEvents] = useState(true);
@@ -124,7 +124,6 @@ function App() {
     }
   };
 
-  // Función actualizada para recibir todos los estados de las capas
   const aplicarMarcadores = (filtro, sNews, sTweets, sEvents, sPatterns) => {
     const { candle, news, events, tweets } = dataRef.current;
     if (!seriesRef.current.candle || !seriesRef.current.volume || !candle.length) return;
@@ -168,7 +167,7 @@ function App() {
         });
     }
 
-    // 2. ESCÁNER MATEMÁTICO DE PATRONES (Solo si la capa está activada)
+    // 2. ESCÁNER MATEMÁTICO DE PATRONES
     if (sPatterns) {
         for (let i = 1; i < candle.length; i++) {
             const prev = candle[i-1];
@@ -236,11 +235,12 @@ function App() {
     interactiveMapRef.current = localMap;
     candleMarkers.sort((a, b) => new Date(a.time) - new Date(b.time));
     volumeMarkers.sort((a, b) => new Date(a.time) - new Date(b.time));
-    createSeriesMarkers(seriesRef.current.candle, candleMarkers);
-    createSeriesMarkers(seriesRef.current.volume, volumeMarkers);
+    
+    // --- SOLUCIÓN: Usamos setMarkers para actualizar/limpiar correctamente las capas ---
+    seriesRef.current.candle.setMarkers(candleMarkers);
+    seriesRef.current.volume.setMarkers(volumeMarkers);
   };
 
-  // Se re-ejecuta cada vez que tocamos cualquier botón de capa o filtro IA
   useEffect(() => { aplicarMarcadores(newsFilter, showNews, showTweets, showEvents, showPatterns); }, [newsFilter, showNews, showTweets, showEvents, showPatterns]);
 
   useEffect(() => {
@@ -451,7 +451,6 @@ function App() {
             
             <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
               
-              {/* --- NUEVA BOTONERA DE GESTIÓN DE CAPAS --- */}
               <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
                 <span style={{ color: '#787B86', fontSize: '11px', fontWeight: 'bold', marginRight: '5px' }}>CAPAS:</span>
                 <ToggleButton label="📰 Noticias" active={showNews} onClick={() => setShowNews(!showNews)} color="#d1d4dc" />
