@@ -170,8 +170,12 @@ function App() {
 
   const aplicarMarcadores = (filtro, sNews, sTweets, sEvents, sPatterns) => {
     const { candle, news, events, tweets } = dataRef.current;
-    if (!seriesRef.current.candle || !seriesRef.current.volume || !candle.length) return;
     
+    // FIX: limpiar siempre primero, aunque no haya datos
+    if (seriesRef.current.candleMarkers) seriesRef.current.candleMarkers.setMarkers([]);
+    if (seriesRef.current.volumeMarkers) seriesRef.current.volumeMarkers.setMarkers([]);
+    
+    if (!seriesRef.current.candle || !seriesRef.current.volume || !candle.length) return;
     if (!seriesRef.current.candleMarkers || !seriesRef.current.volumeMarkers) return;
 
     const candleMarkers = [];
